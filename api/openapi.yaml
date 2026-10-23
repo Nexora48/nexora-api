@@ -1,0 +1,24 @@
+openapi: 3.0.3
+info: { title: Nexora API, version: 0.1.0 }
+servers: [{ url: http://localhost:8080 }]
+paths:
+  /health:
+    get:
+      summary: Liveness
+      responses: { "200": { description: OK } }
+  /ready:
+    get:
+      summary: Readiness (postgres, redis)
+      responses: { "200": { description: Ready }, "503": { description: Dependency down } }
+  /api/v1/ping:
+    get:
+      summary: Versioned API ping
+      responses: { "200": { description: OK } }
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties: { code: { type: string }, message: { type: string }, details: { type: object } }
