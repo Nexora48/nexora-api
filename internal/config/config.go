@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Config struct {
 	RefreshTTL      time.Duration
 	OTPTTL          time.Duration
 	AutoMigrate     bool
+	CORSOrigins     []string
 	ShutdownTimeout time.Duration
 }
 
@@ -36,6 +38,11 @@ func Load() (Config, error) {
 		OTPTTL:          5 * time.Minute,
 		AutoMigrate:     getBool("AUTO_MIGRATE", env == "dev"),
 		ShutdownTimeout: 15 * time.Second,
+	}
+	if v := os.Getenv("CORS_ORIGINS"); v != "" {
+		cfg.CORSOrigins = strings.Split(v, ",")
+	} else if cfg.IsDev() {
+		cfg.CORSOrigins = []string{"*"} // dev only; set CORS_ORIGINS in staging/prod
 	}
 	if cfg.JWTSecret == "" {
 		if !cfg.IsDev() {

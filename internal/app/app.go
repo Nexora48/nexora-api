@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
@@ -69,6 +70,12 @@ func New(d Deps) *App {
 
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID, chimw.RealIP, middleware.Recoverer(d.Log), middleware.Logger(d.Log))
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins: d.Cfg.CORSOrigins,
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "Idempotency-Key"},
+		MaxAge:         300,
+	}))
 	r.Get("/health", hl.Live)
 	r.Get("/ready", hl.Ready)
 
