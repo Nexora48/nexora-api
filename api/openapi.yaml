@@ -1,24 +1,81 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 0.1.0 }
+info: { title: Nexora API, version: 0.2.0, description: "M1 - auth, tenancy, RBAC. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: http://localhost:8080 }]
 paths:
-  /health:
+  /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
+  /ready: { get: { summary: Readiness, responses: { "200": { description: Ready }, "503": { description: Dependency down } } } }
+  /api/v1/auth/otp/request:
+    post:
+      summary: Send login OTP to a registered phone
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/OTPRequest" } } } }
+      responses:
+        "204": { description: Sent }
+        "400": { description: INVALID_PHONE }
+        "404": { description: PHONE_NOT_REGISTERED }
+        "429": { description: OTP_COOLDOWN / OTP_RATE_LIMITED }
+  /api/v1/auth/otp/verify:
+    post:
+      summary: Verify OTP. Returns a session, or selection_required with memberships.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/OTPVerify" } } } }
+      responses:
+        "200": { description: Login result, content: { application/json: { schema: { $ref: "#/components/schemas/LoginResponse" } } } }
+        "401": { description: OTP_INVALID / OTP_EXPIRED }
+        "403": { description: SOCIETY_SUSPENDED }
+  /api/v1/auth/login:
+    post:
+      summary: Email+password login (society_admin, committee only)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PasswordLogin" } } } }
+      responses:
+        "200": { description: Login result, content: { application/json: { schema: { $ref: "#/components/schemas/LoginResponse" } } } }
+        "401": { description: INVALID_CREDENTIALS }
+        "403": { description: NOT_AUTHORISED / SOCIETY_SUSPENDED }
+        "429": { description: ACCOUNT_LOCKED }
+  /api/v1/auth/select-society:
+    post:
+      summary: Choose a society after multi-membership login
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [selection_token, membership_id], properties: { selection_token: { type: string }, membership_id: { type: string, format: uuid }, device: { $ref: "#/components/schemas/Device" } } } } } }
+      responses: { "200": { description: Session }, "403": { description: FORBIDDEN } }
+  /api/v1/auth/refresh:
+    post:
+      summary: Rotate refresh token. Reuse of an old token revokes the session (TOKEN_REUSED).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [refresh_token], properties: { refresh_token: { type: string } } } } } }
+      responses: { "200": { description: New session }, "401": { description: TOKEN_INVALID / TOKEN_EXPIRED / TOKEN_REUSED } }
+  /api/v1/auth/logout:
+    post:
+      summary: Revoke the refresh-token family
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [refresh_token], properties: { refresh_token: { type: string } } } } } }
+      responses: { "204": { description: Logged out } }
+  /api/v1/me:
     get:
-      summary: Liveness
-      responses: { "200": { description: OK } }
-  /ready:
-    get:
-      summary: Readiness (postgres, redis)
-      responses: { "200": { description: Ready }, "503": { description: Dependency down } }
-  /api/v1/ping:
-    get:
-      summary: Versioned API ping
-      responses: { "200": { description: OK } }
+      summary: Profile, membership, society, permissions, features
+      security: [{ bearer: [] }]
+      responses: { "200": { description: OK }, "401": { description: UNAUTHORIZED / TOKEN_EXPIRED }, "403": { description: SOCIETY_SUSPENDED } }
+  /api/v1/me/features:
+    get: { summary: Feature map for the society, security: [{ bearer: [] }], responses: { "200": { description: "{key: bool}" } } }
+  /api/v1/me/devices:
+    put:
+      summary: Register device / FCM token
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Device" } } } }
+      responses: { "204": { description: Saved } }
 components:
+  securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT } }
   schemas:
-    Error:
+    Device: { type: object, required: [device_id], properties: { device_id: { type: string }, platform: { type: string }, app_version: { type: string }, fcm_token: { type: string } } }
+    OTPRequest: { type: object, required: [phone], properties: { phone: { type: string, example: "9999999999" } } }
+    OTPVerify: { type: object, required: [phone, otp], properties: { phone: { type: string }, otp: { type: string, example: "123456" }, device: { $ref: "#/components/schemas/Device" } } }
+    PasswordLogin: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string }, device: { $ref: "#/components/schemas/Device" } } }
+    Membership: { type: object, properties: { id: { type: string }, society_id: { type: string }, society_name: { type: string }, unit_id: { type: string }, role: { type: string } } }
+    LoginResponse:
       type: object
       properties:
-        error:
-          type: object
-          properties: { code: { type: string }, message: { type: string }, details: { type: object } }
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string }
+        expires_in: { type: integer }
+        membership: { $ref: "#/components/schemas/Membership" }
+        selection_required: { type: boolean }
+        selection_token: { type: string }
+        memberships: { type: array, items: { $ref: "#/components/schemas/Membership" } }
+    Error: { type: object, properties: { error: { type: object, properties: { code: { type: string }, message: { type: string }, details: { type: object } } } } }
