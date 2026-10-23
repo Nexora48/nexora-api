@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info: { title: Nexora API, version: 0.3.0, description: "M1 auth/tenancy/RBAC + M2 society setup. Success: {data, meta}. Error: {error:{code,message,details}}." }
-servers: [{ url: http://localhost:8080 }]
+servers: [{ url: "http://localhost:8080" }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
   /ready: { get: { summary: Readiness, responses: { "200": { description: Ready }, "503": { description: Dependency down } } } }

@@ -175,8 +175,26 @@ func (s *Service) Unit(ctx context.Context, p authctx.Principal) (*UnitView, err
 		}
 		v.Members = append(v.Members, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	// family listed without a login still lives in the flat
+	fr, err := s.pool.Query(ctx, `SELECT name FROM family_members WHERE society_id=$1 AND unit_id=$2 AND login_membership_id IS NULL ORDER BY name`,
+		p.SocietyID, unitID)
+	if err != nil {
+		return nil, err
+	}
+	defer fr.Close()
+	for fr.Next() {
+		m := Member{Type: "family"}
+		if err := fr.Scan(&m.Name); err != nil {
+			return nil, err
+		}
+		v.Members = append(v.Members, m)
+	}
 	v.MembersCount = len(v.Members)
-	return &v, rows.Err()
+	return &v, fr.Err()
 }
 
 // ── Family ───────────────────────────────────────────────────────────────────

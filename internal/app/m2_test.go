@@ -515,7 +515,7 @@ func TestResidentSelfService(t *testing.T) {
 	if r := call(t, "POST", "/api/v1/me/vehicles", famTok, map[string]any{"vehicle_type": "car", "number": "MH01AA0001"}); r.Status != 403 {
 		t.Fatalf("family member adds vehicle: %d", r.Status)
 	}
-	if r := call(t, "GET", "/api/v1/me/unit", famTok, nil); r.Status != 200 || r.data()["members_count"] != float64(2) {
+	if r := call(t, "GET", "/api/v1/me/unit", famTok, nil); r.Status != 200 || r.data()["members_count"] != float64(3) { // owner + spouse (login) + kid (record only)
 		t.Fatalf("family sees household: %d %v", r.Status, r.Body)
 	}
 

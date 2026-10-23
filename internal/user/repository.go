@@ -46,7 +46,8 @@ func (r *Repository) TouchLogin(ctx context.Context, id uuid.UUID) error {
 }
 
 const membershipSelect = `
-	SELECT m.id, m.user_id, m.society_id, m.unit_id, m.role_key, m.status, s.name, s.status, m.app_access, m.created_at
+	SELECT m.id, m.user_id, m.society_id, m.unit_id, m.role_key, m.status, s.name, s.status, m.app_access,
+	       COALESCE(m.move_in_date::timestamptz, m.created_at)
 	FROM memberships m JOIN societies s ON s.id = m.society_id`
 
 func scanMembership(row pgx.Row) (*Membership, error) {
