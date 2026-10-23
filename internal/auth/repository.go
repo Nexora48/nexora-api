@@ -98,6 +98,12 @@ func (r *Repository) RevokeFamilyByHash(ctx context.Context, hash string, userID
 	return err
 }
 
+// RevokeAllForUser revokes every live refresh token of the user (all devices, all societies).
+func (r *Repository) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE refresh_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, userID)
+	return err
+}
+
 func (r *Repository) RevokeFamily(ctx context.Context, familyID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `UPDATE refresh_tokens SET revoked_at=now() WHERE family_id=$1 AND revoked_at IS NULL`, familyID)
 	return err

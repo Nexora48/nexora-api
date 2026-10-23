@@ -24,6 +24,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/rbac"
 	"github.com/Nexora48/nexora-api/internal/resident"
 	"github.com/Nexora48/nexora-api/internal/society"
+	"github.com/Nexora48/nexora-api/internal/superadmin"
 	"github.com/Nexora48/nexora-api/internal/user"
 )
 
@@ -59,7 +60,7 @@ func New(d Deps) *App {
 	householdH := household.NewHandler(household.NewService(d.Pool, aud))
 
 	protect := func(perm, featureKey string) chi.Middlewares {
-		chain := chi.Middlewares{middleware.Auth(tokens), middleware.Tenant(societies)}
+		chain := chi.Middlewares{middleware.Auth(tokens), middleware.Tenant(societies), middleware.RequirePasswordChanged}
 		if perm != "" {
 			chain = append(chain, middleware.RequirePermission(rb, perm))
 		}
@@ -74,6 +75,12 @@ func New(d Deps) *App {
 		"redis":    func(c context.Context) error { return d.Redis.Ping(c).Err() },
 	})
 
+	// Internal Nexora console (platform staff, separate tokens and secret)
+	var saSvc *superadmin.Service
+	if cipher, err := superadmin.NewCipher(d.Cfg.PlatformEncKey); err == nil && d.Cfg.PlatformJWTSecret != "" {
+		saSvc = superadmin.NewService(d.Pool, superadmin.NewTokens(d.Cfg.PlatformJWTSecret, d.Cfg.PlatformAccessTTL), cipher, d.Redis, aud, d.Cfg.PlatformRefreshTTL)
+	}
+
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID, chimw.RealIP, middleware.Recoverer(d.Log), middleware.Logger(d.Log))
 	r.Use(cors.Handler(cors.Options{
@@ -87,6 +94,9 @@ func New(d Deps) *App {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/ping", hl.Live)
+		if saSvc != nil {
+			superadmin.Mount(r, saSvc, d.Redis, d.Cfg.PlatformAllowedCIDRs)
+		}
 
 		r.Route("/auth", func(r chi.Router) {
 			r.With(middleware.RateLimit(d.Redis, "otp", 20, time.Hour)).Post("/otp/request", authH.RequestOTP)
@@ -94,33 +104,38 @@ func New(d Deps) *App {
 			r.With(middleware.RateLimit(d.Redis, "login", 60, 10*time.Minute)).Post("/login", authH.PasswordLogin)
 			r.Post("/select-society", authH.SelectSociety)
 			r.Post("/refresh", authH.Refresh)
+			r.With(middleware.Auth(tokens)).Post("/change-password", authH.ChangePassword)
 			r.With(middleware.Auth(tokens)).Post("/logout", authH.Logout)
 		})
 
 		r.Route("/me", func(r chi.Router) {
-			r.Use(protect("", "")...)
+			// read-only identity calls stay available while a temporary password is pending
+			r.Use(middleware.Auth(tokens), middleware.Tenant(societies))
 			r.Get("/", meH.Me)
 			r.Get("/features", meH.Features)
-			r.Put("/devices", meH.RegisterDevice)
 
-			need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
-			r.With(need("profile.manage")).Put("/profile", householdH.UpdateProfile)
-			r.With(need("profile.manage")).Get("/emergency-contact", householdH.GetEmergency)
-			r.With(need("profile.manage")).Put("/emergency-contact", householdH.SetEmergency)
-			r.With(need("unit.read")).Get("/unit", householdH.Unit)
-			r.Route("/family", func(r chi.Router) {
-				r.Use(need("family.manage"))
-				r.Get("/", householdH.ListFamily)
-				r.Post("/", householdH.AddFamily)
-				r.Put("/{id}", householdH.UpdateFamily)
-				r.Delete("/{id}", householdH.DeleteFamily)
-			})
-			r.Route("/vehicles", func(r chi.Router) {
-				r.Use(need("vehicle.manage"))
-				r.Get("/", householdH.ListVehicles)
-				r.Post("/", householdH.AddVehicle)
-				r.Put("/{id}", householdH.UpdateVehicle)
-				r.Delete("/{id}", householdH.DeleteVehicle)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePasswordChanged)
+				r.Put("/devices", meH.RegisterDevice)
+				need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
+				r.With(need("profile.manage")).Put("/profile", householdH.UpdateProfile)
+				r.With(need("profile.manage")).Get("/emergency-contact", householdH.GetEmergency)
+				r.With(need("profile.manage")).Put("/emergency-contact", householdH.SetEmergency)
+				r.With(need("unit.read")).Get("/unit", householdH.Unit)
+				r.Route("/family", func(r chi.Router) {
+					r.Use(need("family.manage"))
+					r.Get("/", householdH.ListFamily)
+					r.Post("/", householdH.AddFamily)
+					r.Put("/{id}", householdH.UpdateFamily)
+					r.Delete("/{id}", householdH.DeleteFamily)
+				})
+				r.Route("/vehicles", func(r chi.Router) {
+					r.Use(need("vehicle.manage"))
+					r.Get("/", householdH.ListVehicles)
+					r.Post("/", householdH.AddVehicle)
+					r.Put("/{id}", householdH.UpdateVehicle)
+					r.Delete("/{id}", householdH.DeleteVehicle)
+				})
 			})
 		})
 

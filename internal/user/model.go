@@ -7,12 +7,13 @@ import (
 )
 
 type User struct {
-	ID           uuid.UUID
-	FullName     string
-	Phone        string
-	Email        *string
-	PasswordHash *string
-	Status       string
+	ID                 uuid.UUID
+	FullName           string
+	Phone              string
+	Email              *string
+	PasswordHash       *string
+	Status             string
+	MustChangePassword bool
 }
 
 // Membership links a user to a society (and optionally a unit) with a role.

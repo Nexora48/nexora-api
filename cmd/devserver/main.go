@@ -55,6 +55,11 @@ func main() {
 		log.Error("seed demo", "err", err)
 		os.Exit(1)
 	}
+	cfg0, _ := config.Load()
+	if err := seed.Platform(ctx, pool, cfg0.PlatformEncKey); err != nil {
+		log.Error("seed platform", "err", err)
+		os.Exit(1)
+	}
 	mr, err := miniredis.Run()
 	if err != nil {
 		log.Error("redis", "err", err)

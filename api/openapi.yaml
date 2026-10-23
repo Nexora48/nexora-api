@@ -1,5 +1,5 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 0.3.0, description: "M1 auth/tenancy/RBAC + M2 society setup. Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 0.4.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: "http://localhost:8080" }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
@@ -113,8 +113,44 @@ paths:
   /api/v1/me/vehicles/{id}:
     put: { summary: Update, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
     delete: { summary: Delete, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
+  /api/v1/superadmin/auth/login:
+    post: { summary: "Step 1 (password). Returns mfa_required, or mfa_setup_required with the TOTP secret and otpauth_url on first sign-in. Never issues a session.", requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } } } } }, responses: { "200": { description: MFA step }, "401": { description: INVALID_CREDENTIALS }, "429": { description: ACCOUNT_LOCKED } } }
+  /api/v1/superadmin/auth/mfa/verify:
+    post: { summary: "Step 2. 6-digit TOTP code (single use) or recovery_code. First enrolment also returns 8 recovery codes.", requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mfa_token], properties: { mfa_token: { type: string }, code: { type: string }, recovery_code: { type: string } } } } } }, responses: { "200": { description: Session }, "401": { description: MFA_INVALID / MFA_EXPIRED }, "429": { description: ACCOUNT_LOCKED } } }
+  /api/v1/superadmin/auth/refresh:
+    post: { summary: Rotate platform refresh token (reuse revokes the session), requestBody: { required: true, content: { application/json: { schema: { type: object, required: [refresh_token], properties: { refresh_token: { type: string } } } } } }, responses: { "200": { description: Session } } }
+  /api/v1/superadmin/auth/logout:
+    post: { summary: Revoke the platform session, security: [{ platform: [] }], responses: { "204": { description: OK } } }
+  /api/v1/superadmin/me:
+    get: { summary: Signed-in staff member, security: [{ platform: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/societies:
+    get: { summary: "Societies with counts, last sign-in and enabled-service count (q, status, page, page_size)", security: [{ platform: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Onboard a society and its first admin (super_admin). Returns admin_credentials with a one-time temporary_password.", security: [{ platform: [] }], responses: { "201": { description: Created }, "409": { description: SLUG_TAKEN / EMAIL_TAKEN } } }
+  /api/v1/superadmin/societies/{id}:
+    get: { summary: "Detail: profile, counts, admins, services (default vs override), recent activity", security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    put: { summary: Edit society profile (super_admin), security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/societies/{id}/suspend:
+    post: { summary: "Suspend (reason required): blocks sign-in and revokes sessions (super_admin)", security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK }, "409": { description: ALREADY_SUSPENDED } } }
+  /api/v1/superadmin/societies/{id}/reactivate:
+    post: { summary: Reactivate a suspended society (super_admin), security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK }, "409": { description: NOT_SUSPENDED } } }
+  /api/v1/superadmin/societies/{id}/admins:
+    post: { summary: "Add a society admin (super_admin); one-time temporary password", security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "201": { description: Created }, "409": { description: ALREADY_ADMIN } } }
+  /api/v1/superadmin/societies/{id}/admins/{userId}/reset-password:
+    post: { summary: "New one-time temporary password, forces change, revokes sessions (super_admin)", security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: userId, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/societies/{id}/features/{key}:
+    put: { summary: "Switch one service on/off for a society (super_admin). Body {enabled, reason}. Takes effect on the next API call; audited with before/after.", security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: key, in: path, required: true, schema: { type: string } }], responses: { "200": { description: Updated service list }, "400": { description: FEATURE_UNKNOWN } } }
+  /api/v1/superadmin/societies/{id}/features/bulk:
+    post: { summary: "Switch several services atomically. Body {features:{key:bool}, reason}", security: [{ platform: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/features:
+    get: { summary: Service catalogue (read-only), security: [{ platform: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/audit:
+    get: { summary: "Audit log (society_id, actor, action or prefix like feature.*, from, to, page)", security: [{ platform: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/stats:
+    get: { summary: Platform totals for the dashboard, security: [{ platform: [] }], responses: { "200": { description: OK } } }
+  /api/v1/auth/change-password:
+    post: { summary: "Change own password (also lifts the temporary-password gate). Returns a fresh session; all other sessions are revoked.", security: [{ bearer: [] }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [current_password, new_password], properties: { current_password: { type: string }, new_password: { type: string } } } } } }, responses: { "200": { description: Session }, "400": { description: WEAK_PASSWORD }, "401": { description: INVALID_CREDENTIALS } } }
 components:
-  securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT } }
+  securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:
     Device: { type: object, required: [device_id], properties: { device_id: { type: string }, platform: { type: string }, app_version: { type: string }, fcm_token: { type: string } } }
     OTPRequest: { type: object, required: [phone], properties: { phone: { type: string, example: "9999999999" } } }

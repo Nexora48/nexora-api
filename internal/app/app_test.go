@@ -24,6 +24,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/notification/sms"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
 	"github.com/Nexora48/nexora-api/internal/seed"
+	"github.com/Nexora48/nexora-api/internal/superadmin"
 	"github.com/Nexora48/nexora-api/internal/testutil"
 )
 
@@ -31,6 +32,8 @@ var (
 	pool *pgxpool.Pool
 	mr   *miniredis.Miniredis
 	srv  *httptest.Server
+
+	saCipher *superadmin.Cipher
 )
 
 func TestMain(m *testing.M) {
@@ -57,7 +60,14 @@ func TestMain(m *testing.M) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
 	cfg := config.Config{Env: "test", JWTSecret: strings.Repeat("k", 40),
-		AccessTTL: 15 * 60 * 1e9, RefreshTTL: 30 * 24 * 3600 * 1e9, OTPTTL: 5 * 60 * 1e9}
+		AccessTTL: 15 * 60 * 1e9, RefreshTTL: 30 * 24 * 3600 * 1e9, OTPTTL: 5 * 60 * 1e9,
+		PlatformJWTSecret: strings.Repeat("p", 40), PlatformEncKey: strings.Repeat("e", 40),
+		PlatformAccessTTL: 15 * 60 * 1e9, PlatformRefreshTTL: 7 * 24 * 3600 * 1e9}
+	var cerr error
+	saCipher, cerr = superadmin.NewCipher(cfg.PlatformEncKey)
+	if cerr != nil {
+		panic(cerr)
+	}
 	a := app.New(app.Deps{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Pool: pool, Redis: rdb, SMS: &sms.Recorder{}})
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)

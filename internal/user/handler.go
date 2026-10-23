@@ -55,9 +55,10 @@ type meResponse struct {
 		Floor  int    `json:"floor"`
 		Type   string `json:"type"`
 	} `json:"unit,omitempty"`
-	MemberSince time.Time       `json:"member_since"`
-	Permissions []string        `json:"permissions"`
-	Features    map[string]bool `json:"features"`
+	MemberSince        time.Time       `json:"member_since"`
+	MustChangePassword bool            `json:"must_change_password"`
+	Permissions        []string        `json:"permissions"`
+	Features           map[string]bool `json:"features"`
 }
 
 // Me returns the caller's profile, active membership, permissions and features.
@@ -100,6 +101,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Society.ID, resp.Society.Name, resp.Society.Status = s.ID.String(), s.Name, s.Status
 	resp.MemberSince = m.CreatedAt
+	resp.MustChangePassword = u.MustChangePassword
 	if m.UnitID != nil {
 		if un, err := h.societies.GetUnit(ctx, p.SocietyID, *m.UnitID); err == nil {
 			resp.Unit = &struct {

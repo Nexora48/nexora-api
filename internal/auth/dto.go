@@ -31,6 +31,11 @@ type SelectSocietyRequest struct {
 	Device         *DeviceInfo `json:"device"`
 }
 
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required,max=200"`
+	NewPassword     string `json:"new_password" validate:"required,min=8,max=200"`
+}
+
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
@@ -49,14 +54,15 @@ type MembershipDTO struct {
 
 // LoginResponse is either a full session or a society-selection prompt.
 type LoginResponse struct {
-	AccessToken       string          `json:"access_token,omitempty"`
-	RefreshToken      string          `json:"refresh_token,omitempty"`
-	TokenType         string          `json:"token_type,omitempty"`
-	ExpiresIn         int             `json:"expires_in,omitempty"`
-	Membership        *MembershipDTO  `json:"membership,omitempty"`
-	SelectionRequired bool            `json:"selection_required"`
-	SelectionToken    string          `json:"selection_token,omitempty"`
-	Memberships       []MembershipDTO `json:"memberships,omitempty"`
+	AccessToken        string          `json:"access_token,omitempty"`
+	RefreshToken       string          `json:"refresh_token,omitempty"`
+	TokenType          string          `json:"token_type,omitempty"`
+	ExpiresIn          int             `json:"expires_in,omitempty"`
+	Membership         *MembershipDTO  `json:"membership,omitempty"`
+	MustChangePassword bool            `json:"must_change_password"`
+	SelectionRequired  bool            `json:"selection_required"`
+	SelectionToken     string          `json:"selection_token,omitempty"`
+	Memberships        []MembershipDTO `json:"memberships,omitempty"`
 }
 
 func toMembershipDTO(m user.Membership) MembershipDTO {

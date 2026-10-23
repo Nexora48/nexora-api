@@ -38,7 +38,9 @@ func main() {
 		defer pool.Close()
 		fail(seed.Dev(ctx, pool))
 		fail(seed.Demo(ctx, pool))
+		fail(seed.Platform(ctx, pool, cfg.PlatformEncKey))
 		fmt.Println("seeded: admin@sunrise.test / Admin@123, resident phone 9999999999 (OTP 123456)")
+		fmt.Println("        console: super@nexora.test / Super@12345 (2FA: go run ./cmd/totp)")
 	default:
 		fail(fmt.Errorf("unknown command %q", os.Args[1]))
 	}

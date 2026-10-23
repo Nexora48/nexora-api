@@ -30,6 +30,7 @@ var (
 
 type accessClaims struct {
 	Role         string `json:"role"`
+	PWC          bool   `json:"pwc,omitempty"`
 	SocietyID    string `json:"sid"`
 	MembershipID string `json:"mid"`
 	jwt.RegisteredClaims
@@ -54,7 +55,7 @@ func (t *TokenManager) sign(c accessClaims) (string, error) {
 func (t *TokenManager) IssueAccess(p authctx.Principal) (string, error) {
 	now := time.Now()
 	return t.sign(accessClaims{
-		Role: p.Role, SocietyID: p.SocietyID.String(), MembershipID: p.MembershipID.String(),
+		Role: p.Role, PWC: p.MustChangePassword, SocietyID: p.SocietyID.String(), MembershipID: p.MembershipID.String(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: issuer, Subject: p.UserID.String(), Audience: jwt.ClaimStrings{audTenant},
 			ID: uuid.NewString(), IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(t.accessTTL)),
@@ -86,7 +87,7 @@ func (t *TokenManager) ParseAccess(token string) (authctx.Principal, error) {
 	if e1 != nil || e2 != nil || e3 != nil {
 		return authctx.Principal{}, ErrTokenInvalid
 	}
-	return authctx.Principal{UserID: uid, SocietyID: sid, MembershipID: mid, Role: c.Role}, nil
+	return authctx.Principal{UserID: uid, SocietyID: sid, MembershipID: mid, Role: c.Role, MustChangePassword: c.PWC}, nil
 }
 
 // IssueSelection is a short-lived token proving the user passed OTP/password

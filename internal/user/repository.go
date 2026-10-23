@@ -15,11 +15,11 @@ type Repository struct{ pool *pgxpool.Pool }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
-const userCols = `id, full_name, phone, email, password_hash, status`
+const userCols = `id, full_name, phone, email, password_hash, status, must_change_password`
 
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
-	if err := row.Scan(&u.ID, &u.FullName, &u.Phone, &u.Email, &u.PasswordHash, &u.Status); err != nil {
+	if err := row.Scan(&u.ID, &u.FullName, &u.Phone, &u.Email, &u.PasswordHash, &u.Status, &u.MustChangePassword); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -38,6 +38,12 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, erro
 
 func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	return scanUser(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id=$1`, id))
+}
+
+// SetPassword stores a new hash and clears the temporary-password flag.
+func (r *Repository) SetPassword(ctx context.Context, id uuid.UUID, hash string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE users SET password_hash=$2, must_change_password=false, updated_at=now() WHERE id=$1`, id, hash)
+	return err
 }
 
 func (r *Repository) TouchLogin(ctx context.Context, id uuid.UUID) error {

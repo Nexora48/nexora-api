@@ -17,3 +17,9 @@ make up && make migrate-up && make seed && make run
 make test         # unit + integration (embedded Postgres, downloaded on first run)
 make test-short   # unit only
 ```
+
+## SuperAdmin console API
+Dev staff (seeded by `make dev`): `super@nexora.test` / `Super@12345` (super_admin) and `support@nexora.test` / `Support@12345` (read-only).
+Two-factor codes: `make totp` prints the current code for each.
+Create real staff: `go run ./cmd/superadmin create-user -email a@nexora.com -name "A B" -role super_admin`; lost authenticator: `go run ./cmd/superadmin reset-mfa -email …`.
+Config: `PLATFORM_JWT_SECRET`, `PLATFORM_ENC_KEY` (both 32+ chars, required outside dev), optional `PLATFORM_ALLOWED_CIDRS`.

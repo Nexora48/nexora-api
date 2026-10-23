@@ -52,6 +52,8 @@ func main() {
 			log.Warn("dev seed failed", "err", err)
 		} else if err := seed.Demo(ctx, pool); err != nil {
 			log.Warn("demo seed failed", "err", err)
+		} else if err := seed.Platform(ctx, pool, cfg.PlatformEncKey); err != nil {
+			log.Warn("platform seed failed", "err", err)
 		}
 	}
 

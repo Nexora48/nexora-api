@@ -12,6 +12,8 @@ type Principal struct {
 	SocietyID    uuid.UUID
 	MembershipID uuid.UUID
 	Role         string
+	// MustChangePassword is true for accounts created with a temporary password.
+	MustChangePassword bool
 }
 
 type ctxKey struct{}

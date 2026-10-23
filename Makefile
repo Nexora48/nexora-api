@@ -1,6 +1,7 @@
 DB_URL ?= postgres://nexora:nexora@localhost:5432/nexora?sslmode=disable
 
 .PHONY: dev up down run build test test-short lint migrate-up migrate-down seed
+totp:         ; go run ./cmd/totp   # current 2FA codes for the seeded console staff
 dev:          ; go run ./cmd/devserver   # no Docker: embedded Postgres + in-memory Redis + seed
 up:           ; docker compose -f deployments/docker-compose.yml up -d
 down:         ; docker compose -f deployments/docker-compose.yml down

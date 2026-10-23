@@ -93,3 +93,14 @@ func RequireFeature(f *feature.Service, key string) func(http.Handler) http.Hand
 		})
 	}
 }
+
+// RequirePasswordChanged blocks accounts that still use a temporary password.
+func RequirePasswordChanged(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := authctx.From(r.Context()); ok && p.MustChangePassword {
+			httpx.Fail(w, httpx.NewError(http.StatusForbidden, "PASSWORD_CHANGE_REQUIRED", "set a new password to continue"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

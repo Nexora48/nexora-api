@@ -91,6 +91,25 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, resp, nil)
 }
 
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	p, ok := authctx.From(r.Context())
+	if !ok {
+		httpx.Fail(w, ErrTokenInvalid)
+		return
+	}
+	var req ChangePasswordRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	resp, err := h.svc.ChangePassword(r.Context(), p, req.CurrentPassword, req.NewPassword, client(r, nil))
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, resp, nil)
+}
+
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	p, ok := authctx.From(r.Context())
 	if !ok {

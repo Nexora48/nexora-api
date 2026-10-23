@@ -30,10 +30,12 @@ var (
 	ErrInvalidCreds       = httpx.NewError(http.StatusUnauthorized, "INVALID_CREDENTIALS", "incorrect email or password")
 	ErrAccountLocked      = httpx.NewError(http.StatusTooManyRequests, "ACCOUNT_LOCKED", "too many failed attempts, try again in 15 minutes")
 	ErrNotAuthorisedApp   = httpx.NewError(http.StatusForbidden, "NOT_AUTHORISED", "this account cannot sign in here")
-	ErrSocietySuspended   = httpx.NewError(http.StatusForbidden, "SOCIETY_SUSPENDED", "this society's access is currently suspended")
+	ErrSocietySuspended   = httpx.NewError(http.StatusForbidden, "SOCIETY_SUSPENDED", "Your society's access is paused. Please contact Nexora support.")
 	ErrRefreshInvalid     = httpx.NewError(http.StatusUnauthorized, "TOKEN_INVALID", "invalid refresh token")
 	ErrRefreshExpired     = httpx.NewError(http.StatusUnauthorized, "TOKEN_EXPIRED", "session expired, please sign in again")
 	ErrTokenReused        = httpx.NewError(http.StatusUnauthorized, "TOKEN_REUSED", "session revoked for security, please sign in again")
+	ErrWeakPassword       = httpx.NewError(http.StatusBadRequest, "WEAK_PASSWORD", "use at least 8 characters with a letter and a number")
+	ErrSamePassword       = httpx.NewError(http.StatusBadRequest, "WEAK_PASSWORD", "choose a password different from the current one")
 	ErrBadMembership      = httpx.NewError(http.StatusForbidden, "FORBIDDEN", "membership not available")
 )
 
@@ -165,7 +167,7 @@ func (s *Service) finishLogin(ctx context.Context, u *user.User, ms []user.Membe
 	}
 	_ = s.users.TouchLogin(ctx, u.ID)
 	if len(usable) == 1 {
-		return s.issueSession(ctx, u.ID, usable[0], uuid.New(), ci, method)
+		return s.issueSession(ctx, u, usable[0], uuid.New(), ci, method)
 	}
 	sel, err := s.tokens.IssueSelection(u.ID)
 	if err != nil {
@@ -193,11 +195,16 @@ func (s *Service) SelectSociety(ctx context.Context, selectionToken string, memb
 	if m.SocietyStatus == society.StatusSuspended {
 		return nil, ErrSocietySuspended
 	}
-	return s.issueSession(ctx, userID, *m, uuid.New(), ci, "select")
+	u, err := s.users.FindByID(ctx, userID)
+	if err != nil {
+		return nil, ErrBadMembership
+	}
+	return s.issueSession(ctx, u, *m, uuid.New(), ci, "select")
 }
 
-func (s *Service) issueSession(ctx context.Context, userID uuid.UUID, m user.Membership, family uuid.UUID, ci ClientInfo, method string) (*LoginResponse, error) {
-	access, err := s.tokens.IssueAccess(authctx.Principal{UserID: userID, SocietyID: m.SocietyID, MembershipID: m.ID, Role: m.RoleKey})
+func (s *Service) issueSession(ctx context.Context, u *user.User, m user.Membership, family uuid.UUID, ci ClientInfo, method string) (*LoginResponse, error) {
+	userID := u.ID
+	access, err := s.tokens.IssueAccess(authctx.Principal{UserID: userID, SocietyID: m.SocietyID, MembershipID: m.ID, Role: m.RoleKey, MustChangePassword: u.MustChangePassword})
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +224,7 @@ func (s *Service) issueSession(ctx context.Context, userID uuid.UUID, m user.Mem
 		Meta: map[string]any{"method": method, "role": m.RoleKey}, IP: ci.IP})
 	dto := toMembershipDTO(m)
 	return &LoginResponse{AccessToken: access, RefreshToken: refresh, TokenType: "Bearer",
-		ExpiresIn: int(s.tokens.AccessTTL().Seconds()), Membership: &dto}, nil
+		ExpiresIn: int(s.tokens.AccessTTL().Seconds()), Membership: &dto, MustChangePassword: u.MustChangePassword}, nil
 }
 
 // Refresh rotates the refresh token and issues a new access token.
@@ -246,13 +253,17 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string, ci ClientInf
 		}
 		return nil, ErrRefreshInvalid
 	}
-	access, err := s.tokens.IssueAccess(authctx.Principal{UserID: info.UserID, SocietyID: m.SocietyID, MembershipID: m.ID, Role: m.RoleKey})
+	u, uerr := s.users.FindByID(ctx, info.UserID)
+	if uerr != nil {
+		return nil, ErrRefreshInvalid
+	}
+	access, err := s.tokens.IssueAccess(authctx.Principal{UserID: info.UserID, SocietyID: m.SocietyID, MembershipID: m.ID, Role: m.RoleKey, MustChangePassword: u.MustChangePassword})
 	if err != nil {
 		return nil, err
 	}
 	dto := toMembershipDTO(*m)
 	return &LoginResponse{AccessToken: access, RefreshToken: newTok, TokenType: "Bearer",
-		ExpiresIn: int(s.tokens.AccessTTL().Seconds()), Membership: &dto}, nil
+		ExpiresIn: int(s.tokens.AccessTTL().Seconds()), Membership: &dto, MustChangePassword: u.MustChangePassword}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, p authctx.Principal, refreshToken, ip string) error {
@@ -261,4 +272,40 @@ func (s *Service) Logout(ctx context.Context, p authctx.Principal, refreshToken,
 	}
 	s.audit.Log(ctx, audit.Entry{ActorID: &p.UserID, SocietyID: &p.SocietyID, Action: "auth.logout", IP: ip})
 	return nil
+}
+
+// ChangePassword sets a new password, revokes every session of the user and returns a fresh session
+// for the same membership (this is also how the temporary-password gate is lifted).
+func (s *Service) ChangePassword(ctx context.Context, p authctx.Principal, current, next string, ci ClientInfo) (*LoginResponse, error) {
+	u, err := s.users.FindByID(ctx, p.UserID)
+	if err != nil || u.PasswordHash == nil {
+		return nil, ErrInvalidCreds
+	}
+	if !VerifyPassword(current, *u.PasswordHash) {
+		s.audit.Log(ctx, audit.Entry{ActorID: &p.UserID, SocietyID: &p.SocietyID, Action: "auth.change_password_failed", IP: ci.IP})
+		return nil, ErrInvalidCreds
+	}
+	if !ValidPasswordPolicy(next) {
+		return nil, ErrWeakPassword
+	}
+	if next == current {
+		return nil, ErrSamePassword
+	}
+	hash, err := HashPassword(next)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.users.SetPassword(ctx, u.ID, hash); err != nil {
+		return nil, err
+	}
+	if err := s.repo.RevokeAllForUser(ctx, u.ID); err != nil {
+		return nil, err
+	}
+	m, err := s.users.GetMembership(ctx, p.MembershipID)
+	if err != nil || m.UserID != u.ID || m.Status != "active" || !m.AppAccess {
+		return nil, ErrBadMembership
+	}
+	u.MustChangePassword = false
+	s.audit.Log(ctx, audit.Entry{ActorID: &u.ID, SocietyID: &p.SocietyID, Action: "auth.change_password", IP: ci.IP})
+	return s.issueSession(ctx, u, *m, uuid.New(), ci, "change_password")
 }

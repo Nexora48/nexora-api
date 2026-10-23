@@ -9,17 +9,24 @@ import (
 )
 
 type Config struct {
-	Env             string
-	HTTPAddr        string
-	DatabaseURL     string
-	RedisAddr       string
-	JWTSecret       string
-	AccessTTL       time.Duration
-	RefreshTTL      time.Duration
-	OTPTTL          time.Duration
-	AutoMigrate     bool
-	CORSOrigins     []string
-	ShutdownTimeout time.Duration
+	Env         string
+	HTTPAddr    string
+	DatabaseURL string
+	RedisAddr   string
+	JWTSecret   string
+	AccessTTL   time.Duration
+	RefreshTTL  time.Duration
+	OTPTTL      time.Duration
+	AutoMigrate bool
+	CORSOrigins []string
+
+	// SuperAdmin (platform) console
+	PlatformJWTSecret    string
+	PlatformEncKey       string
+	PlatformAllowedCIDRs []string
+	PlatformAccessTTL    time.Duration
+	PlatformRefreshTTL   time.Duration
+	ShutdownTimeout      time.Duration
 }
 
 // IsDev enables dev-only behaviour (fixed OTP, console SMS, seed data).
@@ -38,6 +45,23 @@ func Load() (Config, error) {
 		OTPTTL:          5 * time.Minute,
 		AutoMigrate:     getBool("AUTO_MIGRATE", env == "dev"),
 		ShutdownTimeout: 15 * time.Second,
+	}
+	cfg.PlatformJWTSecret = get("PLATFORM_JWT_SECRET", "")
+	cfg.PlatformEncKey = get("PLATFORM_ENC_KEY", "")
+	cfg.PlatformAccessTTL = 15 * time.Minute
+	cfg.PlatformRefreshTTL = 7 * 24 * time.Hour
+	if v := os.Getenv("PLATFORM_ALLOWED_CIDRS"); v != "" {
+		cfg.PlatformAllowedCIDRs = strings.Split(v, ",")
+	}
+	if cfg.IsDev() {
+		if cfg.PlatformJWTSecret == "" {
+			cfg.PlatformJWTSecret = "dev-platform-secret-dev-platform-secret"
+		}
+		if cfg.PlatformEncKey == "" {
+			cfg.PlatformEncKey = "dev-platform-enc-key-not-for-production"
+		}
+	} else if len(cfg.PlatformJWTSecret) < 32 || len(cfg.PlatformEncKey) < 32 {
+		return cfg, fmt.Errorf("PLATFORM_JWT_SECRET and PLATFORM_ENC_KEY (32+ chars) are required outside dev")
 	}
 	if v := os.Getenv("CORS_ORIGINS"); v != "" {
 		cfg.CORSOrigins = strings.Split(v, ",")
