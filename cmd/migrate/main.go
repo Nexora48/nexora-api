@@ -37,6 +37,7 @@ func main() {
 		}
 		defer pool.Close()
 		fail(seed.Dev(ctx, pool))
+		fail(seed.Demo(ctx, pool))
 		fmt.Println("seeded: admin@sunrise.test / Admin@123, resident phone 9999999999 (OTP 123456)")
 	default:
 		fail(fmt.Errorf("unknown command %q", os.Args[1]))

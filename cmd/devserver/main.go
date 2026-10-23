@@ -51,6 +51,10 @@ func main() {
 		log.Error("seed", "err", err)
 		os.Exit(1)
 	}
+	if err := seed.Demo(ctx, pool); err != nil {
+		log.Error("seed demo", "err", err)
+		os.Exit(1)
+	}
 	mr, err := miniredis.Run()
 	if err != nil {
 		log.Error("redis", "err", err)

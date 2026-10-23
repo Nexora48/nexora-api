@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,9 +18,11 @@ import (
 	"github.com/Nexora48/nexora-api/internal/config"
 	"github.com/Nexora48/nexora-api/internal/feature"
 	"github.com/Nexora48/nexora-api/internal/health"
+	"github.com/Nexora48/nexora-api/internal/household"
 	"github.com/Nexora48/nexora-api/internal/middleware"
 	"github.com/Nexora48/nexora-api/internal/notification/sms"
 	"github.com/Nexora48/nexora-api/internal/rbac"
+	"github.com/Nexora48/nexora-api/internal/resident"
 	"github.com/Nexora48/nexora-api/internal/society"
 	"github.com/Nexora48/nexora-api/internal/user"
 )
@@ -51,6 +54,9 @@ func New(d Deps) *App {
 	authSvc := auth.NewService(auth.NewRepository(d.Pool), users, societies, tokens, otp, d.Redis, aud, d.Cfg.RefreshTTL)
 	authH := auth.NewHandler(authSvc)
 	meH := user.NewHandler(users, societies, rb, feats)
+	societyH := society.NewHandler(societies, aud)
+	residentH := resident.NewHandler(resident.NewService(d.Pool, aud))
+	householdH := household.NewHandler(household.NewService(d.Pool, aud))
 
 	protect := func(perm, featureKey string) chi.Middlewares {
 		chain := chi.Middlewares{middleware.Auth(tokens), middleware.Tenant(societies)}
@@ -96,6 +102,59 @@ func New(d Deps) *App {
 			r.Get("/", meH.Me)
 			r.Get("/features", meH.Features)
 			r.Put("/devices", meH.RegisterDevice)
+
+			need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
+			r.With(need("profile.manage")).Put("/profile", householdH.UpdateProfile)
+			r.With(need("profile.manage")).Get("/emergency-contact", householdH.GetEmergency)
+			r.With(need("profile.manage")).Put("/emergency-contact", householdH.SetEmergency)
+			r.With(need("unit.read")).Get("/unit", householdH.Unit)
+			r.Route("/family", func(r chi.Router) {
+				r.Use(need("family.manage"))
+				r.Get("/", householdH.ListFamily)
+				r.Post("/", householdH.AddFamily)
+				r.Put("/{id}", householdH.UpdateFamily)
+				r.Delete("/{id}", householdH.DeleteFamily)
+			})
+			r.Route("/vehicles", func(r chi.Router) {
+				r.Use(need("vehicle.manage"))
+				r.Get("/", householdH.ListVehicles)
+				r.Post("/", householdH.AddVehicle)
+				r.Put("/{id}", householdH.UpdateVehicle)
+				r.Delete("/{id}", householdH.DeleteVehicle)
+			})
+		})
+
+		r.Route("/society", func(r chi.Router) {
+			r.Group(func(r chi.Router) { // read access (admin + committee)
+				r.Use(protect("resident.read", "")...)
+				r.Get("/blocks", societyH.ListBlocks)
+				r.Get("/units", societyH.ListUnits)
+				r.Get("/units/{id}", societyH.GetUnit)
+				r.Get("/apartments", societyH.Apartments)
+				r.Get("/stats", societyH.Stats)
+				r.Get("/residents", residentH.List)
+				r.Get("/residents/{id}", residentH.Get)
+			})
+			r.Group(func(r chi.Router) { // society structure
+				r.Use(protect("society.manage", "")...)
+				r.Post("/blocks", societyH.CreateBlock)
+				r.Put("/blocks/{id}", societyH.UpdateBlock)
+				r.Delete("/blocks/{id}", societyH.DeleteBlock)
+				r.Post("/blocks/{id}/units/bulk", societyH.BulkUnits)
+				r.Post("/units", societyH.CreateUnit)
+				r.Put("/units/{id}", societyH.UpdateUnit)
+				r.Delete("/units/{id}", societyH.DeleteUnit)
+			})
+			r.Group(func(r chi.Router) { // resident management
+				r.Use(protect("resident.manage", "")...)
+				r.Post("/residents", residentH.Create)
+				r.Put("/residents/{id}", residentH.Update)
+				r.Post("/residents/{id}/suspend", residentH.Suspend())
+				r.Post("/residents/{id}/restore", residentH.Restore())
+				r.Post("/residents/{id}/move-out", residentH.MoveOut())
+				r.Post("/residents/import", residentH.Import)
+				r.Get("/residents/import/template", residentH.ImportTemplate)
+			})
 		})
 	})
 	return &App{Router: r, Protect: protect}

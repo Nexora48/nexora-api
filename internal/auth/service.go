@@ -184,7 +184,7 @@ func (s *Service) SelectSociety(ctx context.Context, selectionToken string, memb
 		return nil, err
 	}
 	m, err := s.users.GetMembership(ctx, membershipID)
-	if errors.Is(err, user.ErrNotFound) || (err == nil && (m.UserID != userID || m.Status != "active")) {
+	if errors.Is(err, user.ErrNotFound) || (err == nil && (m.UserID != userID || m.Status != "active" || !m.AppAccess)) {
 		return nil, ErrBadMembership
 	}
 	if err != nil {
@@ -239,7 +239,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string, ci ClientInf
 		return nil, err
 	}
 	m, err := s.users.GetMembership(ctx, info.MembershipID)
-	if err != nil || m.Status != "active" || m.SocietyStatus == society.StatusSuspended {
+	if err != nil || m.Status != "active" || !m.AppAccess || m.SocietyStatus == society.StatusSuspended {
 		_ = s.repo.RevokeFamily(ctx, info.FamilyID)
 		if err == nil && m.SocietyStatus == society.StatusSuspended {
 			return nil, ErrSocietySuspended

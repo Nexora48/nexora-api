@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -47,6 +48,14 @@ type meResponse struct {
 		Name   string `json:"name"`
 		Status string `json:"status"`
 	} `json:"society"`
+	Unit *struct {
+		ID     string `json:"id"`
+		Number string `json:"number"`
+		Block  string `json:"block"`
+		Floor  int    `json:"floor"`
+		Type   string `json:"type"`
+	} `json:"unit,omitempty"`
+	MemberSince time.Time       `json:"member_since"`
 	Permissions []string        `json:"permissions"`
 	Features    map[string]bool `json:"features"`
 }
@@ -62,7 +71,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, err := h.users.GetMembership(ctx, p.MembershipID)
-	if err != nil || m.UserID != p.UserID || m.Status != "active" {
+	if err != nil || m.UserID != p.UserID || m.Status != "active" || !m.AppAccess {
 		httpx.Fail(w, httpx.NewError(http.StatusForbidden, "FORBIDDEN", "membership no longer active"))
 		return
 	}
@@ -90,6 +99,18 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		resp.Membership.UnitID = &s
 	}
 	resp.Society.ID, resp.Society.Name, resp.Society.Status = s.ID.String(), s.Name, s.Status
+	resp.MemberSince = m.CreatedAt
+	if m.UnitID != nil {
+		if un, err := h.societies.GetUnit(ctx, p.SocietyID, *m.UnitID); err == nil {
+			resp.Unit = &struct {
+				ID     string `json:"id"`
+				Number string `json:"number"`
+				Block  string `json:"block"`
+				Floor  int    `json:"floor"`
+				Type   string `json:"type"`
+			}{un.ID.String(), un.Number, un.BlockCode, un.Floor, un.UnitType}
+		}
+	}
 	resp.Permissions, resp.Features = perms, feats
 	httpx.OK(w, resp, nil)
 }

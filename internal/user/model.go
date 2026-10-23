@@ -1,6 +1,10 @@
 package user
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type User struct {
 	ID           uuid.UUID
@@ -21,4 +25,6 @@ type Membership struct {
 	Status        string
 	SocietyName   string
 	SocietyStatus string
+	AppAccess     bool
+	CreatedAt     time.Time
 }

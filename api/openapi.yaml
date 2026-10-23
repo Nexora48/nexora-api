@@ -1,5 +1,5 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 0.2.0, description: "M1 - auth, tenancy, RBAC. Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 0.3.0, description: "M1 auth/tenancy/RBAC + M2 society setup. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: http://localhost:8080 }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
@@ -59,6 +59,60 @@ paths:
       security: [{ bearer: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Device" } } } }
       responses: { "204": { description: Saved } }
+  /api/v1/society/blocks:
+    get: { summary: "Blocks with unit/occupied counts (resident.read)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Create block (society.manage). 409 BLOCK_EXISTS", security: [{ bearer: [] }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name, code], properties: { name: { type: string }, code: { type: string } } } } } }, responses: { "201": { description: Created } } }
+  /api/v1/society/blocks/{id}:
+    put: { summary: Update block, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
+    delete: { summary: "Delete block. 409 BLOCK_NOT_EMPTY if it has residents/history", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Deleted } } }
+  /api/v1/society/blocks/{id}/units/bulk:
+    post:
+      summary: "Generate flats floors x units_per_floor (start_floor default 1; number_format tokens {block} {floor} {seq} {seq:02} {seq:03}). ?dry_run=true previews."
+      security: [{ bearer: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [floors, units_per_floor, unit_type], properties: { floors: { type: integer }, units_per_floor: { type: integer }, start_floor: { type: integer }, unit_type: { type: string, enum: [1BHK, 2BHK, 3BHK, 4BHK, Villa, Shop, Studio] }, number_format: { type: string } } } } } }
+      responses: { "201": { description: Created }, "200": { description: Dry-run result } }
+  /api/v1/society/units:
+    get: { summary: "Units (filters block_id, floor, occupancy, q; paged)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Create unit. 409 UNIT_EXISTS", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/units/{id}:
+    get: { summary: Unit with derived occupancy, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    put: { summary: Update unit, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
+    delete: { summary: "Delete unit. 409 UNIT_OCCUPIED", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Deleted } } }
+  /api/v1/society/apartments:
+    get: { summary: "Tree for the Apartments screen: blocks > floors > flats with occupant", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/stats:
+    get: { summary: "Counts for the admin dashboard", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/residents:
+    get: { summary: "Residents (type owner|tenant|family, status active|pending|suspended|inactive, unit_id, q, page, page_size)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Create resident (resident.manage). 409 UNIT_ROLE_TAKEN | ALREADY_RESIDENT | NO_HEAD | EMAIL_TAKEN", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/residents/{id}:
+    get: { summary: "Resident detail (id = membership id) incl. family, vehicles, emergency contact", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    put: { summary: "Edit. 403 USER_SHARED when changing name/email of a person in several societies", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/residents/{id}/suspend: { post: { summary: Suspend (revokes sessions), security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK }, "409": { description: INVALID_STATE } } } }
+  /api/v1/society/residents/{id}/restore: { post: { summary: Restore, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } } }
+  /api/v1/society/residents/{id}/move-out: { post: { summary: "Move out (frees flat, ends household logins)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } } }
+  /api/v1/society/residents/import:
+    post: { summary: "CSV import (multipart field file, <=1000 rows, <=2MB). ?dry_run=true validates only. Columns: full_name,phone,email,unit,role,move_in_date", security: [{ bearer: [] }], responses: { "200": { description: "{total,valid,created,errors[{row,message}]}" } } }
+  /api/v1/society/residents/import/template:
+    get: { summary: CSV template, security: [{ bearer: [] }], responses: { "200": { description: text/csv } } }
+  /api/v1/me/profile: { put: { summary: "Edit own name/email (403 USER_SHARED if in several societies)", security: [{ bearer: [] }], responses: { "204": { description: OK } } } }
+  /api/v1/me/emergency-contact:
+    get: { summary: Own emergency contact (null if unset), security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: Set emergency contact, security: [{ bearer: [] }], responses: { "204": { description: OK } } }
+  /api/v1/me/unit: { get: { summary: "Own flat + household + vehicle count", security: [{ bearer: [] }], responses: { "200": { description: OK } } } }
+  /api/v1/me/family:
+    get: { summary: Family of the caller (owner/tenant only), security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Add family member; with phone they get a limited login", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/me/family/{id}:
+    put: { summary: Update, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
+    delete: { summary: Remove (revokes their login), security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
+  /api/v1/me/vehicles:
+    get: { summary: Vehicles of the caller's flat, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Add vehicle (number normalised, unique per society). 409 VEHICLE_EXISTS", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/me/vehicles/{id}:
+    put: { summary: Update, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
+    delete: { summary: Delete, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: OK } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT } }
   schemas:

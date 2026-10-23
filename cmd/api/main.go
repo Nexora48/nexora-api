@@ -50,6 +50,8 @@ func main() {
 	if cfg.IsDev() {
 		if err := seed.Dev(ctx, pool); err != nil {
 			log.Warn("dev seed failed", "err", err)
+		} else if err := seed.Demo(ctx, pool); err != nil {
+			log.Warn("demo seed failed", "err", err)
 		}
 	}
 

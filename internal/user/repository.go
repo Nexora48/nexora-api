@@ -46,13 +46,13 @@ func (r *Repository) TouchLogin(ctx context.Context, id uuid.UUID) error {
 }
 
 const membershipSelect = `
-	SELECT m.id, m.user_id, m.society_id, m.unit_id, m.role_key, m.status, s.name, s.status
+	SELECT m.id, m.user_id, m.society_id, m.unit_id, m.role_key, m.status, s.name, s.status, m.app_access, m.created_at
 	FROM memberships m JOIN societies s ON s.id = m.society_id`
 
 func scanMembership(row pgx.Row) (*Membership, error) {
 	var m Membership
 	if err := row.Scan(&m.ID, &m.UserID, &m.SocietyID, &m.UnitID, &m.RoleKey, &m.Status,
-		&m.SocietyName, &m.SocietyStatus); err != nil {
+		&m.SocietyName, &m.SocietyStatus, &m.AppAccess, &m.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -63,7 +63,7 @@ func scanMembership(row pgx.Row) (*Membership, error) {
 
 // ListActiveMemberships returns the user's active memberships (any society status).
 func (r *Repository) ListActiveMemberships(ctx context.Context, userID uuid.UUID) ([]Membership, error) {
-	rows, err := r.pool.Query(ctx, membershipSelect+` WHERE m.user_id=$1 AND m.status='active' ORDER BY s.name, m.created_at`, userID)
+	rows, err := r.pool.Query(ctx, membershipSelect+` WHERE m.user_id=$1 AND m.status='active' AND m.app_access ORDER BY s.name, m.created_at`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (r *Repository) ListActiveMemberships(ctx context.Context, userID uuid.UUID
 	for rows.Next() {
 		var m Membership
 		if err := rows.Scan(&m.ID, &m.UserID, &m.SocietyID, &m.UnitID, &m.RoleKey, &m.Status,
-			&m.SocietyName, &m.SocietyStatus); err != nil {
+			&m.SocietyName, &m.SocietyStatus, &m.AppAccess, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
