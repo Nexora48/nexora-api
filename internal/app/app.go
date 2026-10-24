@@ -13,9 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Nexora48/nexora-api/internal/attachment"
 	"github.com/Nexora48/nexora-api/internal/audit"
 	"github.com/Nexora48/nexora-api/internal/auth"
 	"github.com/Nexora48/nexora-api/internal/blob"
+	"github.com/Nexora48/nexora-api/internal/complaint"
 	"github.com/Nexora48/nexora-api/internal/config"
 	"github.com/Nexora48/nexora-api/internal/contacts"
 	"github.com/Nexora48/nexora-api/internal/delivery"
@@ -25,8 +27,10 @@ import (
 	"github.com/Nexora48/nexora-api/internal/household"
 	"github.com/Nexora48/nexora-api/internal/live"
 	"github.com/Nexora48/nexora-api/internal/middleware"
+	"github.com/Nexora48/nexora-api/internal/notice"
 	"github.com/Nexora48/nexora-api/internal/notification/sms"
 	"github.com/Nexora48/nexora-api/internal/notify"
+	"github.com/Nexora48/nexora-api/internal/poll"
 	"github.com/Nexora48/nexora-api/internal/rbac"
 	"github.com/Nexora48/nexora-api/internal/realtime"
 	"github.com/Nexora48/nexora-api/internal/resident"
@@ -54,11 +58,14 @@ type App struct {
 	// Empty perm / feature skip that check.
 	Protect func(perm, featureKey string) chi.Middlewares
 	// Visitors is exposed so the process can run its expiry sweeper.
-	Visitors *visitor.Service
-	Hub      *realtime.Hub
-	Sos      *sos.Service
-	Notify   *notify.Service
-	gates    *gate.Service
+	Visitors   *visitor.Service
+	Hub        *realtime.Hub
+	Sos        *sos.Service
+	Notices    *notice.Service
+	Complaints *complaint.Service
+	Polls      *poll.Service
+	Notify     *notify.Service
+	gates      *gate.Service
 }
 
 // Start runs the background jobs (visit expiry, shift cleanup, cross-instance event bridge) until ctx ends.
@@ -68,6 +75,9 @@ func (a *App) Start(ctx context.Context) {
 	go a.Hub.Run(ctx)
 	go a.Notify.RunWorker(ctx, time.Minute)
 	go a.Sos.RunSweeper(ctx, 15*time.Second)
+	go a.Notices.RunSweeper(ctx, time.Minute)
+	go a.Complaints.RunSweeper(ctx, time.Hour)
+	go a.Polls.RunSweeper(ctx, time.Minute)
 }
 
 func New(d Deps) *App {
@@ -110,6 +120,19 @@ func New(d Deps) *App {
 	noteH := notify.NewHandler(noteSvc)
 	sosSvc := sos.NewService(d.Pool, aud, noteSvc, hub, d.Cfg.SOSEscalateAfter, d.Cfg.SOSCancelWindow)
 	sosH := sos.NewHandler(sosSvc)
+	var store blob.Store // the same store as visitor photos; nil disables uploads
+	if d.Cfg.BlobPath != "" {
+		if st, err := blob.NewDisk(d.Cfg.BlobPath); err == nil {
+			store = st
+		}
+	}
+	files := attachment.NewService(d.Pool, store, d.Cfg.AttachmentMaxMB)
+	noticeSvc := notice.NewService(d.Pool, aud, files, noteSvc, hub)
+	noticeH := notice.NewHandler(noticeSvc, files)
+	complaintSvc := complaint.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.ComplaintReopen, d.Cfg.ComplaintAutoclose)
+	complaintH := complaint.NewHandler(complaintSvc, files)
+	pollSvc := poll.NewService(d.Pool, aud, noteSvc, hub)
+	pollH := poll.NewHandler(pollSvc)
 	contactsSvc := contacts.NewService(d.Pool, aud)
 	contactsH := contacts.NewHandler(contactsSvc)
 	if d.Cfg.BlobPath != "" {
@@ -250,6 +273,33 @@ func New(d Deps) *App {
 			r.Post("/visits/{id}/check-out", visitorH.CheckOut)
 		})
 
+		// Notices (feature `community`), complaints, polls
+		r.Route("/notices", func(r chi.Router) {
+			r.Use(protect("notice.read", "community")...)
+			r.Get("/", noticeH.List)
+			r.Get("/unread-count", noticeH.UnreadCount)
+			r.Get("/{id}", noticeH.Get)
+			r.Get("/{id}/attachments/{aid}", noticeH.Attachment)
+		})
+		r.Route("/complaints", func(r chi.Router) {
+			r.Use(protect("", "complaints")...)
+			r.With(need("complaint.create")).Post("/", complaintH.Raise)
+			r.With(need("complaint.read")).Get("/", complaintH.ListMine)
+			r.With(need("complaint.read")).Get("/common", complaintH.ListCommon)
+			r.With(need("complaint.read")).Get("/{id}", complaintH.GetMine())
+			r.With(need("complaint.read")).Get("/{id}/attachments/{aid}", complaintH.Attachment)
+			r.With(need("complaint.create")).Post("/{id}/photos", complaintH.Photo)
+			r.With(need("complaint.create")).Post("/{id}/comments", complaintH.Comment)
+			r.With(need("complaint.create")).Post("/{id}/reopen", complaintH.Reopen)
+			r.With(need("complaint.create")).Post("/{id}/rate", complaintH.Rate)
+		})
+		r.Route("/polls", func(r chi.Router) {
+			r.Use(protect("poll.read", "polls")...)
+			r.Get("/", pollH.List)
+			r.Get("/{id}", pollH.Get())
+			r.With(need("poll.vote")).Post("/{id}/vote", pollH.Vote)
+		})
+
 		// SOS (feature `sos`)
 		r.Route("/sos", func(r chi.Router) {
 			r.Use(protect("", "sos")...)
@@ -270,6 +320,42 @@ func New(d Deps) *App {
 		})
 
 		r.Route("/society", func(r chi.Router) {
+			r.Group(func(r chi.Router) { // notice board management
+				r.Use(protect("notice.manage", "community")...)
+				r.Get("/notices", noticeH.AdminList)
+				r.Post("/notices", noticeH.Create)
+				r.Get("/notices/{id}", noticeH.AdminGet)
+				r.Put("/notices/{id}", noticeH.Update)
+				r.Delete("/notices/{id}", noticeH.Archive)
+				r.Post("/notices/{id}/publish", noticeH.Publish)
+				r.Post("/notices/{id}/attachments", noticeH.Upload)
+				r.Get("/notices/{id}/attachments/{aid}", noticeH.AdminFile)
+				r.Delete("/notices/{id}/attachments/{aid}", noticeH.RemoveFile)
+				r.Get("/notices/{id}/stats", noticeH.Stats)
+			})
+			r.Group(func(r chi.Router) { // complaints desk
+				r.Use(protect("complaint.manage", "complaints")...)
+				r.Get("/complaints", complaintH.AdminList)
+				r.Get("/complaints/stats", complaintH.Stats)
+				r.Get("/complaints/export", complaintH.Export)
+				r.Get("/complaints/{id}", complaintH.AdminGet())
+				r.Get("/complaints/{id}/attachments/{aid}", complaintH.AdminAttachment)
+				r.Post("/complaints/{id}/assign", complaintH.Assign)
+				r.Post("/complaints/{id}/status", complaintH.SetStatus)
+				r.Post("/complaints/{id}/priority", complaintH.SetPriority)
+				r.Post("/complaints/{id}/comments", complaintH.OfficeComment)
+				r.Get("/office-members", complaintH.OfficeMembers)
+			})
+			r.Group(func(r chi.Router) { // polls
+				r.Use(protect("poll.manage", "polls")...)
+				r.Get("/polls", pollH.AdminList)
+				r.Post("/polls", pollH.Create)
+				r.Get("/polls/{id}", pollH.AdminGet())
+				r.Put("/polls/{id}", pollH.Update)
+				r.Delete("/polls/{id}", pollH.Archive)
+				r.Post("/polls/{id}/close", pollH.Close())
+				r.Get("/polls/{id}/export", pollH.Export)
+			})
 			r.Group(func(r chi.Router) { // SOS log (the service limits it to the office roles)
 				r.Use(protect("sos.respond", "sos")...)
 				r.Get("/sos", sosH.AdminList)
@@ -333,5 +419,5 @@ func New(d Deps) *App {
 			})
 		})
 	})
-	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notify: noteSvc, gates: gateSvc}
+	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notices: noticeSvc, Complaints: complaintSvc, Polls: pollSvc, Notify: noteSvc, gates: gateSvc}
 }

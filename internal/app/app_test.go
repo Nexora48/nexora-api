@@ -20,10 +20,13 @@ import (
 
 	"github.com/Nexora48/nexora-api/db"
 	"github.com/Nexora48/nexora-api/internal/app"
+	"github.com/Nexora48/nexora-api/internal/complaint"
 	"github.com/Nexora48/nexora-api/internal/config"
+	"github.com/Nexora48/nexora-api/internal/notice"
 	"github.com/Nexora48/nexora-api/internal/notification/sms"
 	"github.com/Nexora48/nexora-api/internal/notify"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
+	"github.com/Nexora48/nexora-api/internal/poll"
 	"github.com/Nexora48/nexora-api/internal/realtime"
 	"github.com/Nexora48/nexora-api/internal/seed"
 	"github.com/Nexora48/nexora-api/internal/sos"
@@ -37,12 +40,15 @@ var (
 	mr   *miniredis.Miniredis
 	srv  *httptest.Server
 
-	saCipher *superadmin.Cipher
-	vsvc     *visitor.Service
-	ahub     *realtime.Hub
-	asos     *sos.Service
-	anote    *notify.Service
-	pushRec  *pushRecorder
+	saCipher    *superadmin.Cipher
+	vsvc        *visitor.Service
+	ahub        *realtime.Hub
+	asos        *sos.Service
+	anotices    *notice.Service
+	acomplaints *complaint.Service
+	apolls      *poll.Service
+	anote       *notify.Service
+	pushRec     *pushRecorder
 )
 
 func TestMain(m *testing.M) {
@@ -84,6 +90,9 @@ func TestMain(m *testing.M) {
 	vsvc = a.Visitors
 	ahub = a.Hub
 	asos = a.Sos
+	anotices = a.Notices
+	acomplaints = a.Complaints
+	apolls = a.Polls
 	anote = a.Notify
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)

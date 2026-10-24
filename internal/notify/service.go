@@ -83,6 +83,10 @@ func Group(t string) string {
 		return "visits"
 	case strings.HasPrefix(t, "sos."):
 		return "sos"
+	case strings.HasPrefix(t, "notice."), strings.HasPrefix(t, "poll."):
+		return "community"
+	case strings.HasPrefix(t, "complaint."):
+		return "complaints"
 	}
 	return "system"
 }
@@ -330,7 +334,7 @@ type Pref struct {
 	Locked bool   `json:"locked"` // critical: cannot be switched off
 }
 
-var prefGroups = []struct{ key, label string }{{"visits", "Visitors & deliveries"}, {"system", "Society updates"}}
+var prefGroups = []struct{ key, label string }{{"visits", "Visitors & deliveries"}, {"community", "Notices & polls"}, {"complaints", "Complaints"}, {"system", "Society updates"}}
 
 func (s *Service) Prefs(ctx context.Context, user uuid.UUID) ([]Pref, error) {
 	out := []Pref{}
@@ -347,7 +351,7 @@ func (s *Service) SetPref(ctx context.Context, user uuid.UUID, group string, pus
 	if group == "sos" {
 		return httpx.NewError(http.StatusBadRequest, "LOCKED", "emergency alerts cannot be switched off")
 	}
-	if group != "visits" && group != "system" {
+	if group != "visits" && group != "system" && group != "community" && group != "complaints" {
 		return httpx.NewError(http.StatusBadRequest, "VALIDATION", "unknown group")
 	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO notification_prefs (user_id, grp, push, email) VALUES ($1,$2,$3,$4)

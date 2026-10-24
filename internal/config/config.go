@@ -41,6 +41,11 @@ type Config struct {
 	SOSEscalateAfter time.Duration
 	SOSCancelWindow  time.Duration
 	NotifyRetention  time.Duration
+
+	// Community (M7)
+	ComplaintAutoclose time.Duration
+	ComplaintReopen    time.Duration
+	AttachmentMaxMB    int
 }
 
 // IsDev enables dev-only behaviour (fixed OTP, console SMS, seed data).
@@ -77,6 +82,16 @@ func Load() (Config, error) {
 	}
 	if v, err := strconv.Atoi(os.Getenv("NOTIFY_RETENTION_DAYS")); err == nil && v > 0 {
 		cfg.NotifyRetention = time.Duration(v) * 24 * time.Hour
+	}
+	cfg.ComplaintAutoclose, cfg.ComplaintReopen, cfg.AttachmentMaxMB = 7*24*time.Hour, 7*24*time.Hour, 5
+	if v, err := strconv.Atoi(os.Getenv("COMPLAINT_AUTOCLOSE_DAYS")); err == nil && v > 0 {
+		cfg.ComplaintAutoclose = time.Duration(v) * 24 * time.Hour
+	}
+	if v, err := strconv.Atoi(os.Getenv("COMPLAINT_REOPEN_DAYS")); err == nil && v > 0 {
+		cfg.ComplaintReopen = time.Duration(v) * 24 * time.Hour
+	}
+	if v, err := strconv.Atoi(os.Getenv("ATTACHMENT_MAX_MB")); err == nil && v > 0 {
+		cfg.AttachmentMaxMB = v
 	}
 	cfg.FCMProjectID = os.Getenv("FCM_PROJECT_ID")
 	cfg.FCMCredentialsFile = os.Getenv("FCM_CREDENTIALS_FILE")

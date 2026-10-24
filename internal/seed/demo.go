@@ -97,6 +97,9 @@ func Demo(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := demoM6(ctx, pool); err != nil {
 		return err
 	}
+	if err := demoM7(ctx, pool); err != nil {
+		return err
+	}
 	return demoVisits(ctx, pool)
 }
 
@@ -161,8 +164,12 @@ func demoGuard(ctx context.Context, pool *pgxpool.Pool) error {
 		   SELECT u.id, $1, 'guard' FROM users u WHERE u.phone='` + GuardPhone + `'
 		   AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id=u.id AND m.society_id=$1)`,
 	} {
-		if _, err := pool.Exec(ctx, q, SocietyID); err != nil {
-			return err
+		var args []any
+		if strings.Contains(q, "$1") {
+			args = []any{SocietyID}
+		}
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			return fmt.Errorf("demo guard: %w", err)
 		}
 	}
 	return nil
@@ -195,6 +202,109 @@ func demoM6(ctx context.Context, pool *pgxpool.Pool) error {
 			args = append(args, ResidentID)
 		}
 		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			return fmt.Errorf("demo m6: %w (%.60s)", err, strings.Join(strings.Fields(q), " "))
+		}
+	}
+	return nil
+}
+
+// demoM7 adds notices, complaints in every status with timelines, and an open poll.
+func demoM7(ctx context.Context, pool *pgxpool.Pool) error {
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM notices WHERE society_id=$1)`, SocietyID).Scan(&exists); err != nil || exists {
+		return err
+	}
+	var blockB *string
+	_ = pool.QueryRow(ctx, `SELECT id::text FROM blocks WHERE society_id=$1 AND code='B'`, SocietyID).Scan(&blockB)
+
+	notices := []struct {
+		title, body, category, priority, status string
+		pinned, onlyB                           bool
+		age                                     string
+	}{
+		{"Annual Society Meeting 2026", "The AGM is on Sunday at 10 AM in the community hall. Agenda: budget, security contract, lift renovation. Please attend.", "event", "important", "published", true, false, "2 days"},
+		{"Water Supply Interruption — Block B", "Water supply to Block B will be off on Sunday 10 AM – 2 PM for tank cleaning. Please store water in advance.", "maintenance", "urgent", "published", false, true, "5 hours"},
+		{"New Gate Entry Security Protocol", "From Monday every visitor is verified by OTP or QR at the gate. Pre-approve guests from the app to avoid waiting.", "notice", "important", "published", true, false, "6 days"},
+		{"Diwali celebration plan", "Community Diwali evening on 8 November. Volunteers please contact the office.", "event", "normal", "scheduled", false, false, "0"},
+		{"Terrace garden proposal (draft)", "Draft proposal for a rooftop garden, to be shared after committee review.", "general", "normal", "draft", false, false, "0"},
+	}
+	for _, n := range notices {
+		var id string
+		publishedAt := "NULL"
+		publishAt := "NULL"
+		switch n.status {
+		case "published":
+			publishedAt = "now() - interval '" + n.age + "'"
+		case "scheduled":
+			publishAt = "now() + interval '3 days'"
+		}
+		q := `INSERT INTO notices (society_id, title, body, category, priority, status, pinned, all_blocks, publish_at, published_at, created_by)
+		      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,` + publishAt + `,` + publishedAt + `,$9) RETURNING id::text`
+		if err := pool.QueryRow(ctx, q, SocietyID, n.title, n.body, n.category, n.priority, n.status, n.pinned, !n.onlyB, AdminUserID).Scan(&id); err != nil {
+			return err
+		}
+		if n.onlyB && blockB != nil {
+			if _, err := pool.Exec(ctx, `INSERT INTO notice_blocks (notice_id, block_id) VALUES ($1,$2)`, id, *blockB); err != nil {
+				return err
+			}
+		}
+	}
+
+	// complaints from flat A101 (the demo resident), one per status
+	type cmp struct {
+		title, desc, category, priority, status string
+		age                                     string
+		events                                  [][3]string // type, body, who (office|resident)
+	}
+	list := []cmp{
+		{"Water leakage in bathroom", "Water drips from the overhead pipe onto the floor and tiles.", "plumbing", "high", "in_progress", "2 days", [][3]string{{"raised", "", "resident"}, {"assigned", "Assigned to Anita Sharma (vendor: Aqua Plumbers), target in 2 days", "office"}, {"status", "in_progress: Plumber visited, part ordered", "office"}}},
+		{"Lift not working in Block A", "The lift has been stuck on the ground floor since morning.", "lift", "urgent", "assigned", "1 day", [][3]string{{"raised", "", "resident"}, {"assigned", "Assigned to Anita Sharma", "office"}}},
+		{"Corridor light flickering", "The third-floor corridor light flickers at night.", "electrical", "medium", "open", "3 hours", [][3]string{{"raised", "", "resident"}}},
+		{"Garbage not collected", "Garbage was not collected from the floor for two days.", "cleaning", "medium", "resolved", "3 days", [][3]string{{"raised", "", "resident"}, {"status", "resolved: Housekeeping schedule corrected", "office"}}},
+		{"Noise from the flat above", "Loud music after 11 PM on weekdays.", "noise", "low", "closed", "12 days", [][3]string{{"raised", "", "resident"}, {"status", "resolved: Spoke to the neighbour", "office"}, {"auto_closed", "Closed automatically after a week without a reply", "office"}}},
+	}
+	for i, c := range list {
+		var id string
+		resolved := "NULL"
+		if c.status == "resolved" {
+			resolved = "now() - interval '1 day'"
+		} else if c.status == "closed" {
+			resolved = "now() - interval '9 days'"
+		}
+		q := `INSERT INTO complaints (society_id, seq, unit_id, raised_by_membership_id, title, description, category, priority, status, resolved_at, created_at, updated_at, assigned_membership_id)
+		      SELECT $1, $2, u.id, $3, $4, $5, $6, $7, $8, ` + resolved + `, now() - interval '` + c.age + `', now(), CASE WHEN $8 IN ('assigned','in_progress') THEN $9::uuid END
+		      FROM units u WHERE u.society_id=$1 AND u.number='A101' RETURNING id::text`
+		if err := pool.QueryRow(ctx, q, SocietyID, i+1, ResidentMem, c.title, c.desc, c.category, c.priority, c.status, AdminMemID).Scan(&id); err != nil {
+			return err
+		}
+		for _, e := range c.events {
+			actor := ResidentMem
+			if e[2] == "office" {
+				actor = AdminMemID
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO complaint_events (complaint_id, society_id, actor_membership_id, type, body) VALUES ($1,$2,$3,$4,$5)`, id, SocietyID, actor, e[0], e[1]); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO complaint_counters (society_id, last) VALUES ($1,$2) ON CONFLICT (society_id) DO UPDATE SET last=EXCLUDED.last`, SocietyID, len(list)); err != nil {
+		return err
+	}
+
+	// an open poll with a few votes
+	var pid string
+	if err := pool.QueryRow(ctx, `INSERT INTO polls (society_id, question, multi, anonymous, closes_at, created_by) VALUES ($1,'Should we repaint the lobby this year?',false,true, now() + interval '5 days', $2) RETURNING id::text`, SocietyID, AdminUserID).Scan(&pid); err != nil {
+		return err
+	}
+	for i, label := range []string{"Yes, repaint now", "Next year", "No, keep it as it is"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO poll_options (poll_id, label, position) VALUES ($1,$2,$3)`, pid, label, i); err != nil {
+			return err
+		}
+	}
+	for i, number := range []string{"A102", "A103", "B101"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO poll_votes (poll_id, unit_id, option_id, user_id)
+			SELECT $1, u.id, (SELECT id FROM poll_options WHERE poll_id=$1 AND position=$2), $3 FROM units u WHERE u.society_id=$4 AND u.number=$5`,
+			pid, []int{0, 0, 1}[i], ResidentID, SocietyID, number); err != nil {
 			return err
 		}
 	}
