@@ -26,7 +26,11 @@ type Config struct {
 	PlatformAllowedCIDRs []string
 	PlatformAccessTTL    time.Duration
 	PlatformRefreshTTL   time.Duration
-	ShutdownTimeout      time.Duration
+
+	// Visitors
+	VisitorMaxWindow  time.Duration
+	VisitorWalkinWait time.Duration
+	ShutdownTimeout   time.Duration
 }
 
 // IsDev enables dev-only behaviour (fixed OTP, console SMS, seed data).
@@ -45,6 +49,14 @@ func Load() (Config, error) {
 		OTPTTL:          5 * time.Minute,
 		AutoMigrate:     getBool("AUTO_MIGRATE", env == "dev"),
 		ShutdownTimeout: 15 * time.Second,
+	}
+	cfg.VisitorMaxWindow = 7 * 24 * time.Hour
+	cfg.VisitorWalkinWait = 10 * time.Minute
+	if v, err := strconv.Atoi(os.Getenv("VISITOR_MAX_WINDOW_DAYS")); err == nil && v > 0 {
+		cfg.VisitorMaxWindow = time.Duration(v) * 24 * time.Hour
+	}
+	if v, err := strconv.Atoi(os.Getenv("VISITOR_WALKIN_TIMEOUT_MIN")); err == nil && v > 0 {
+		cfg.VisitorWalkinWait = time.Duration(v) * time.Minute
 	}
 	cfg.PlatformJWTSecret = get("PLATFORM_JWT_SECRET", "")
 	cfg.PlatformEncKey = get("PLATFORM_ENC_KEY", "")

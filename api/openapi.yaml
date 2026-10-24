@@ -1,5 +1,5 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 0.4.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console. Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 0.5.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: "http://localhost:8080" }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
@@ -149,6 +149,34 @@ paths:
     get: { summary: Platform totals for the dashboard, security: [{ platform: [] }], responses: { "200": { description: OK } } }
   /api/v1/auth/change-password:
     post: { summary: "Change own password (also lifts the temporary-password gate). Returns a fresh session; all other sessions are revoked.", security: [{ bearer: [] }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [current_password, new_password], properties: { current_password: { type: string }, new_password: { type: string } } } } } }, responses: { "200": { description: Session }, "400": { description: WEAK_PASSWORD }, "401": { description: INVALID_CREDENTIALS } } }
+  /api/v1/visitors:
+    get: { summary: "My flat's visits (tab=active|history|invited, purpose, page). Feature: visitors", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Pre-approve a visitor; returns pass_code (6 digits) and qr (NXV1:...). Needs visitor.create and can_invite_visitors. 409 INVITE_LIMIT, 400 INVALID_WINDOW", security: [{ bearer: [] }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [visitor_name, purpose], properties: { visitor_name: { type: string }, visitor_phone: { type: string }, purpose: { type: string, enum: [guest, delivery, cab, service] }, company: { type: string }, vehicle_number: { type: string }, visitor_count: { type: integer }, note: { type: string }, expected_from: { type: string, format: date-time }, expected_until: { type: string, format: date-time } } } } } }, responses: { "201": { description: Created } } }
+  /api/v1/visitors/summary:
+    get: { summary: "Counts for Home: active, invited, today", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/visitors/{id}:
+    get: { summary: Visit detail (pass shown while invited), security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK }, "404": { description: NOT_FOUND } } }
+  /api/v1/visitors/{id}/cancel:
+    post: { summary: Cancel an open pass, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK }, "409": { description: INVALID_STATE } } }
+  /api/v1/visitors/{id}/decision:
+    post: { summary: "Approve/reject a waiting walk-in. Body {decision: approve|reject, reason?}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK }, "409": { description: INVALID_STATE (decided or expired) } } }
+  /api/v1/gate/verify:
+    post: { summary: "Guard: look up a pass by code or qr. 200 with valid + reason (NOT_FOUND, EXPIRED, NOT_YET_VALID, ALREADY_USED, CANCELLED, REJECTED, NOT_APPROVED). 429 VERIFY_LOCKED after 10 misses in 5 min", security: [{ bearer: [] }], responses: { "200": { description: OK }, "429": { description: VERIFY_LOCKED } } }
+  /api/v1/gate/units:
+    get: { summary: Guard flat search for walk-ins (q), security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/gate/visits:
+    get: { summary: "Guard feed (status=waiting|approved|inside)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Register a walk-in (waiting for the resident). 409 NO_RESIDENT", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/gate/visits/{id}/check-in:
+    post: { summary: "Check in (invited inside its window, or approved). 409 PASS_NOT_VALID / INVALID_STATE", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/gate/visits/{id}/check-out:
+    post: { summary: Check out, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/visitors:
+    get: { summary: "Society visitor log (visitor.admin): status, purpose, unit_id, q, from, to (RFC 3339), page", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/visitors/stats:
+    get: { summary: "KPIs: today, inside_now, awaiting", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/visitors/export:
+    get: { summary: "CSV of the filtered log (max 10,000 rows, formula-safe)", security: [{ bearer: [] }], responses: { "200": { description: text/csv } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:

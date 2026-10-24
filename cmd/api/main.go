@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Nexora48/nexora-api/db"
 	"github.com/Nexora48/nexora-api/internal/app"
@@ -58,6 +59,7 @@ func main() {
 	}
 
 	a := app.New(app.Deps{Cfg: cfg, Log: log, Pool: pool, Redis: rdb, SMS: sms.ConsoleSender{Log: log}})
+	go a.Visitors.RunSweeper(ctx, time.Minute)
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: a.Router}
 	go func() {
 		log.Info("listening", "addr", cfg.HTTPAddr, "env", cfg.Env)

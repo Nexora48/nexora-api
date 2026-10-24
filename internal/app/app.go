@@ -26,6 +26,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/society"
 	"github.com/Nexora48/nexora-api/internal/superadmin"
 	"github.com/Nexora48/nexora-api/internal/user"
+	"github.com/Nexora48/nexora-api/internal/visitor"
 )
 
 type Deps struct {
@@ -42,6 +43,8 @@ type App struct {
 	// Protect returns the standard chain: auth → tenant → permission? → feature?.
 	// Empty perm / feature skip that check.
 	Protect func(perm, featureKey string) chi.Middlewares
+	// Visitors is exposed so the process can run its expiry sweeper.
+	Visitors *visitor.Service
 }
 
 func New(d Deps) *App {
@@ -58,6 +61,9 @@ func New(d Deps) *App {
 	societyH := society.NewHandler(societies, aud)
 	residentH := resident.NewHandler(resident.NewService(d.Pool, aud))
 	householdH := household.NewHandler(household.NewService(d.Pool, aud))
+	visitorSvc := visitor.NewService(d.Pool, d.Redis, aud, d.Cfg.JWTSecret, d.Cfg.VisitorMaxWindow, d.Cfg.VisitorWalkinWait)
+	visitorH := visitor.NewHandler(visitorSvc)
+	need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
 
 	protect := func(perm, featureKey string) chi.Middlewares {
 		chain := chi.Middlewares{middleware.Auth(tokens), middleware.Tenant(societies), middleware.RequirePasswordChanged}
@@ -117,7 +123,6 @@ func New(d Deps) *App {
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePasswordChanged)
 				r.Put("/devices", meH.RegisterDevice)
-				need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
 				r.With(need("profile.manage")).Put("/profile", householdH.UpdateProfile)
 				r.With(need("profile.manage")).Get("/emergency-contact", householdH.GetEmergency)
 				r.With(need("profile.manage")).Put("/emergency-contact", householdH.SetEmergency)
@@ -139,7 +144,35 @@ func New(d Deps) *App {
 			})
 		})
 
+		// Visitors (feature `visitors`): resident side, scoped to the caller's flat
+		r.Route("/visitors", func(r chi.Router) {
+			r.Use(protect("visitor.read", "visitors")...)
+			r.Get("/", visitorH.List)
+			r.Get("/summary", visitorH.Summary)
+			r.Get("/{id}", visitorH.Get)
+			r.With(need("visitor.create")).Post("/", visitorH.Create)
+			r.With(need("visitor.create")).Post("/{id}/cancel", visitorH.Cancel)
+			r.With(need("visitor.approve")).Post("/{id}/decision", visitorH.Decide)
+		})
+
+		// Gate API for guards (the guard app arrives in M5)
+		r.Route("/gate", func(r chi.Router) {
+			r.Use(protect("gate.entry", "visitors")...)
+			r.Post("/verify", visitorH.Verify)
+			r.Get("/units", visitorH.GateUnits)
+			r.Get("/visits", visitorH.GateList)
+			r.Post("/visits", visitorH.WalkIn)
+			r.Post("/visits/{id}/check-in", visitorH.CheckIn)
+			r.Post("/visits/{id}/check-out", visitorH.CheckOut)
+		})
+
 		r.Route("/society", func(r chi.Router) {
+			r.Group(func(r chi.Router) { // admin visitor log
+				r.Use(protect("visitor.admin", "visitors")...)
+				r.Get("/visitors", visitorH.AdminList)
+				r.Get("/visitors/stats", visitorH.AdminStats)
+				r.Get("/visitors/export", visitorH.AdminExport)
+			})
 			r.Group(func(r chi.Router) { // read access (admin + committee)
 				r.Use(protect("resident.read", "")...)
 				r.Get("/blocks", societyH.ListBlocks)
@@ -172,5 +205,5 @@ func New(d Deps) *App {
 			})
 		})
 	})
-	return &App{Router: r, Protect: protect}
+	return &App{Router: r, Protect: protect, Visitors: visitorSvc}
 }

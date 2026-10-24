@@ -3,6 +3,7 @@ package seed
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -86,6 +87,55 @@ func Demo(ctx context.Context, pool *pgxpool.Pool) error {
 			INSERT INTO vehicles (society_id, unit_id, owner_user_id, vehicle_type, number, make_model, color)
 			SELECT $1, m.unit_id, m.user_id, $3, $4, $5, $6 FROM memberships m WHERE m.id=$2 AND m.unit_id IS NOT NULL
 			ON CONFLICT (society_id, number) DO NOTHING`, SocietyID, ResidentMem, v.typ, v.num, v.model, v.color); err != nil {
+			return err
+		}
+	}
+	return demoVisits(ctx, pool)
+}
+
+// demoVisits adds a spread of visitors in every status (only when the society has none yet).
+func demoVisits(ctx context.Context, pool *pgxpool.Pool) error {
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM visits WHERE society_id=$1`, SocietyID).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	now := time.Now()
+	h := func(d time.Duration) time.Time { return now.Add(d) }
+	type v struct {
+		unit, name, purpose, company, vehicle, status, source, code, reason string
+		host                                                                bool
+		from, until                                                         time.Time
+		entered, exited, created                                            *time.Time
+	}
+	t := func(d time.Duration) *time.Time { x := now.Add(d); return &x }
+	rows := []v{
+		{"A101", "Priya Sharma", "guest", "", "MH12AB1234", "inside", "pre_approved", "", "", true, h(-time.Hour), h(3 * time.Hour), t(-35 * time.Minute), nil, t(-90 * time.Minute)},
+		{"A101", "Zomato Delivery", "delivery", "Zomato", "", "waiting", "walk_in", "", "", false, h(0), h(2 * time.Hour), nil, nil, t(-time.Minute)},
+		{"A101", "Sneha N", "guest", "", "", "invited", "pre_approved", "482913", "", true, h(30 * time.Minute), h(270 * time.Minute), nil, nil, t(-10 * time.Minute)},
+		{"A101", "Ramesh Electrician", "service", "", "", "completed", "pre_approved", "", "", true, h(-27 * time.Hour), h(-23 * time.Hour), t(-26 * time.Hour), t(-25 * time.Hour), t(-28 * time.Hour)},
+		{"A101", "Amazon Courier", "delivery", "Amazon", "", "rejected", "walk_in", "", "Not expecting a parcel", false, h(-5 * time.Hour), h(-3 * time.Hour), nil, nil, t(-5 * time.Hour)},
+		{"A101", "Uber cab", "cab", "Uber", "MH02CD5678", "cancelled", "pre_approved", "", "", true, h(-8 * time.Hour), h(-4 * time.Hour), nil, nil, t(-9 * time.Hour)},
+		{"A101", "Old friend", "guest", "", "", "invited", "pre_approved", "111222", "", true, h(-30 * time.Hour), h(-26 * time.Hour), nil, nil, t(-31 * time.Hour)},
+		{"A104", "Manoj Kini", "guest", "", "", "inside", "walk_in", "", "", false, h(-2 * time.Hour), h(0), t(-100 * time.Minute), nil, t(-2 * time.Hour)},
+		{"B101", "Anil - Swiggy", "delivery", "Swiggy", "", "completed", "walk_in", "", "", false, h(-4 * time.Hour), h(-2 * time.Hour), t(-230 * time.Minute), t(-220 * time.Minute), t(-4 * time.Hour)},
+		{"B102", "Jaya Cleaners", "service", "", "", "completed", "walk_in", "", "", false, h(-6 * time.Hour), h(-4 * time.Hour), t(-350 * time.Minute), t(-300 * time.Minute), t(-6 * time.Hour)},
+	}
+	for _, r := range rows {
+		var host any
+		if r.host {
+			host = ResidentMem
+		}
+		var code, company, vehicle, reason any
+		for dst, val := range map[*any]string{&code: r.code, &company: r.company, &vehicle: r.vehicle, &reason: r.reason} {
+			if val != "" {
+				*dst = val
+			}
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO visits (society_id, unit_id, host_membership_id, visitor_name, purpose, company, vehicle_number, source, status, pass_code,
+			                    expected_from, expected_until, entered_at, exited_at, decision_reason, created_at)
+			SELECT $1, un.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16 FROM units un WHERE un.society_id=$1 AND un.number=$2`,
+			SocietyID, r.unit, host, r.name, r.purpose, company, vehicle, r.source, r.status, code, r.from, r.until, r.entered, r.exited, reason, r.created); err != nil {
 			return err
 		}
 	}

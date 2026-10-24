@@ -26,6 +26,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/seed"
 	"github.com/Nexora48/nexora-api/internal/superadmin"
 	"github.com/Nexora48/nexora-api/internal/testutil"
+	"github.com/Nexora48/nexora-api/internal/visitor"
 )
 
 var (
@@ -34,6 +35,7 @@ var (
 	srv  *httptest.Server
 
 	saCipher *superadmin.Cipher
+	vsvc     *visitor.Service
 )
 
 func TestMain(m *testing.M) {
@@ -69,6 +71,7 @@ func TestMain(m *testing.M) {
 		panic(cerr)
 	}
 	a := app.New(app.Deps{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Pool: pool, Redis: rdb, SMS: &sms.Recorder{}})
+	vsvc = a.Visitors
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)
 	a.Router.With(a.Protect("", "visitors")...).Get("/t/feature", ok)
