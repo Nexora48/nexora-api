@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -66,6 +67,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer mr.Close()
+	// miniredis never expires keys by itself: advance its clock in real time so OTP cooldowns,
+	// rate limits and locks behave like they do on a real Redis.
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for range t.C {
+			mr.FastForward(time.Second)
+		}
+	}()
 
 	cfg, _ := config.Load()
 	a := app.New(app.Deps{Cfg: cfg, Log: log, Pool: pool,
