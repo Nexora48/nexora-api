@@ -63,7 +63,11 @@ type Service struct {
 	rdb        *redis.Client
 	audit      *audit.Logger
 	refreshTTL time.Duration
+	onFeatures func(context.Context, uuid.UUID)
 }
+
+// SetFeaturesHook is called after service switches change (apps are told to reload them).
+func (s *Service) SetFeaturesHook(f func(context.Context, uuid.UUID)) { s.onFeatures = f }
 
 func NewService(pool storePool, tokens *Tokens, cipher *Cipher, rdb *redis.Client, a *audit.Logger, refreshTTL time.Duration) *Service {
 	return &Service{store: &store{pool: pool}, tokens: tokens, cipher: cipher, rdb: rdb, audit: a, refreshTTL: refreshTTL}

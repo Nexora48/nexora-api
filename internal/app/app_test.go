@@ -23,6 +23,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/config"
 	"github.com/Nexora48/nexora-api/internal/notification/sms"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
+	"github.com/Nexora48/nexora-api/internal/realtime"
 	"github.com/Nexora48/nexora-api/internal/seed"
 	"github.com/Nexora48/nexora-api/internal/superadmin"
 	"github.com/Nexora48/nexora-api/internal/testutil"
@@ -36,6 +37,8 @@ var (
 
 	saCipher *superadmin.Cipher
 	vsvc     *visitor.Service
+	ahub     *realtime.Hub
+	pushRec  *pushRecorder
 )
 
 func TestMain(m *testing.M) {
@@ -70,8 +73,12 @@ func TestMain(m *testing.M) {
 	if cerr != nil {
 		panic(cerr)
 	}
-	a := app.New(app.Deps{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Pool: pool, Redis: rdb, SMS: &sms.Recorder{}})
+	blobDir, _ := os.MkdirTemp("", "nexora-blobs")
+	cfg.BlobPath = blobDir
+	pushRec = &pushRecorder{}
+	a := app.New(app.Deps{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Pool: pool, Redis: rdb, SMS: &sms.Recorder{}, Push: pushRec})
 	vsvc = a.Visitors
+	ahub = a.Hub
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)
 	a.Router.With(a.Protect("", "visitors")...).Get("/t/feature", ok)
@@ -81,6 +88,7 @@ func TestMain(m *testing.M) {
 	srv.Close()
 	pool.Close()
 	stop()
+	_ = os.RemoveAll(blobDir)
 	os.Exit(code)
 }
 

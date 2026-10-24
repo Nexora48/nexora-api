@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS devices_token_idx;
+ALTER TABLE devices DROP COLUMN IF EXISTS app;

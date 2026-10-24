@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"github.com/go-chi/chi/v5"
 	"net/http"
 	"time"
 
@@ -133,6 +134,7 @@ type deviceRequest struct {
 	Platform   string `json:"platform" validate:"max=20"`
 	AppVersion string `json:"app_version" validate:"max=30"`
 	FCMToken   string `json:"fcm_token" validate:"max=500"`
+	App        string `json:"app" validate:"omitempty,oneof=living get admin"`
 }
 
 // RegisterDevice stores/updates the caller's device (push token).
@@ -143,7 +145,17 @@ func (h *Handler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	if err := h.users.UpsertDevice(r.Context(), p.UserID, req.DeviceID, req.Platform, req.FCMToken, req.AppVersion); err != nil {
+	if err := h.users.UpsertDevice(r.Context(), p.UserID, req.DeviceID, req.Platform, req.FCMToken, req.AppVersion, req.App); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.NoContent(w)
+}
+
+// UnregisterDevice drops the push token of one device (logout).
+func (h *Handler) UnregisterDevice(w http.ResponseWriter, r *http.Request) {
+	p, _ := authctx.From(r.Context())
+	if err := h.users.ClearDeviceToken(r.Context(), p.UserID, chi.URLParam(r, "id")); err != nil {
 		httpx.Fail(w, err)
 		return
 	}

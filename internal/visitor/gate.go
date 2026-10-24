@@ -128,18 +128,26 @@ func (s *Service) WalkIn(ctx context.Context, p authctx.Principal, in WalkInInpu
 		count = 1
 	}
 	now := time.Now()
+	var needPhoto bool
+	_ = s.pool.QueryRow(ctx, `SELECT walkin_photo_required FROM societies WHERE id=$1`, p.SocietyID).Scan(&needPhoto)
+	needPhoto = needPhoto && s.blobs != nil
 	var id uuid.UUID
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO visits (society_id, unit_id, created_by_membership_id, visitor_name, visitor_phone, purpose, company, vehicle_number,
-		                    visitor_count, source, status, expected_from, expected_until)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'walk_in','waiting',$10,$11) RETURNING id`,
+		                    visitor_count, source, status, expected_from, expected_until, awaiting_photo, gate_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'walk_in','waiting',$10,$11,$12,
+		        (SELECT gate_id FROM guard_shifts WHERE membership_id=$3 AND ended_at IS NULL)) RETURNING id`,
 		p.SocietyID, in.UnitID, p.MembershipID, strings.TrimSpace(in.VisitorName), phone, in.Purpose, cleanText(in.Company), vehicle, count,
-		now, now.Add(walkInWindow)).Scan(&id)
+		now, now.Add(walkInWindow), needPhoto).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
 	s.logv(ctx, p, "visit.walk_in", id, map[string]any{"unit_id": in.UnitID.String(), "purpose": in.Purpose})
-	return s.one(ctx, p.SocietyID, id, nil)
+	v, err := s.one(ctx, p.SocietyID, id, nil)
+	if err == nil && !needPhoto { // with a required photo the resident is asked once the photo is in
+		s.emit(ctx, "visit.requested", v)
+	}
+	return v, err
 }
 
 // GateList is the guard's live feed (waiting / approved / inside).
@@ -159,7 +167,8 @@ func (s *Service) GateList(ctx context.Context, p authctx.Principal, status stri
 
 func (s *Service) CheckIn(ctx context.Context, p authctx.Principal, id uuid.UUID) (*Visit, error) {
 	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
-		UPDATE visits SET status='inside', entered_at=now(), checked_in_by=$3, updated_at=now()
+		UPDATE visits SET status='inside', entered_at=now(), checked_in_by=$3, updated_at=now(),
+		       gate_id=COALESCE((SELECT gate_id FROM guard_shifts WHERE membership_id=$3 AND ended_at IS NULL), gate_id)
 		WHERE id=$1 AND society_id=$2 AND (
 		      (status='invited'  AND now() BETWEEN expected_from - interval '%d seconds' AND expected_until)
 		   OR (status='approved' AND expected_until >= now()))`, int(earlyGrace.Seconds())), id, p.SocietyID, p.MembershipID)
@@ -177,7 +186,9 @@ func (s *Service) CheckIn(ctx context.Context, p authctx.Principal, id uuid.UUID
 		return nil, invalidState(v.Status)
 	}
 	s.logv(ctx, p, "visit.check_in", id, nil)
-	return s.one(ctx, p.SocietyID, id, nil)
+	v, err := s.one(ctx, p.SocietyID, id, nil)
+	s.emit(ctx, "visit.checked_in", v)
+	return v, err
 }
 
 func (s *Service) CheckOut(ctx context.Context, p authctx.Principal, id uuid.UUID) (*Visit, error) {
@@ -190,5 +201,7 @@ func (s *Service) CheckOut(ctx context.Context, p authctx.Principal, id uuid.UUI
 		return nil, s.classify(ctx, p.SocietyID, id, nil)
 	}
 	s.logv(ctx, p, "visit.check_out", id, nil)
-	return s.one(ctx, p.SocietyID, id, nil)
+	v, err := s.one(ctx, p.SocietyID, id, nil)
+	s.emit(ctx, "visit.checked_out", v)
+	return v, err
 }

@@ -104,6 +104,9 @@ func (s *Service) SetFeatures(ctx context.Context, actor, societyID uuid.UUID, c
 		return nil, err
 	}
 	if len(done) > 0 {
+		if s.onFeatures != nil {
+			s.onFeatures(ctx, societyID)
+		}
 		s.platformLog(ctx, actor, &societyID, "feature.toggle", "society", societyID.String(), map[string]any{"changes": done, "reason": strings.TrimSpace(reason)})
 	}
 	return s.societyFeatures(ctx, societyID)

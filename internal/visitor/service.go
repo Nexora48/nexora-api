@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Nexora48/nexora-api/internal/audit"
+	"github.com/Nexora48/nexora-api/internal/blob"
 	"github.com/Nexora48/nexora-api/internal/household"
 	"github.com/Nexora48/nexora-api/internal/platform/authctx"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
@@ -43,6 +44,11 @@ var (
 	ErrInvalidVehicle   = httpx.NewError(http.StatusBadRequest, "VALIDATION", "vehicle number must be 4-12 letters/digits")
 	ErrVerifyLocked     = httpx.NewError(http.StatusTooManyRequests, "VERIFY_LOCKED", "too many wrong codes, try again in 5 minutes")
 	ErrUnitNotFound     = httpx.NewError(http.StatusNotFound, "UNIT_NOT_FOUND", "flat not found in this society")
+	ErrPhotoPending     = httpx.NewError(http.StatusConflict, "PHOTO_PENDING", "the guard is still taking the visitor's photo")
+	ErrRingLimit        = httpx.NewError(http.StatusTooManyRequests, "RING_LIMIT", "you can ring again in a minute (max 3 times)")
+	ErrNoBlobs          = httpx.NewError(http.StatusServiceUnavailable, "PHOTOS_UNAVAILABLE", "photo storage is not configured")
+	ErrBadPhoto         = httpx.NewError(http.StatusBadRequest, "BAD_PHOTO", "send a JPEG or PNG image up to 2 MB")
+	ErrNoPhoto          = httpx.NewError(http.StatusNotFound, "NOT_FOUND", "no photo for this visit")
 	ErrNoResident       = httpx.NewError(http.StatusConflict, "NO_RESIDENT", "nobody lives in this flat")
 )
 
@@ -63,6 +69,25 @@ type Service struct {
 	qrKey      []byte
 	maxWindow  time.Duration
 	walkinWait time.Duration
+	ev         Events
+	blobs      blob.Store
+}
+
+// Events lets the process publish visit changes (realtime + push) without this package knowing how.
+type Events interface {
+	VisitEvent(ctx context.Context, typ string, v *Visit)
+}
+
+// SetEvents wires the realtime/push dispatcher; nil keeps visit changes silent.
+func (s *Service) SetEvents(e Events) { s.ev = e }
+
+// SetBlobs enables walk-in photos.
+func (s *Service) SetBlobs(b blob.Store) { s.blobs = b }
+
+func (s *Service) emit(ctx context.Context, typ string, v *Visit) {
+	if s.ev != nil && v != nil {
+		s.ev.VisitEvent(ctx, typ, v)
+	}
 }
 
 func NewService(pool *pgxpool.Pool, rdb *redis.Client, a *audit.Logger, secret string, maxWindow, walkinWait time.Duration) *Service {
@@ -92,17 +117,18 @@ func (s *Service) selectCols() string {
 		    WHERE mm.unit_id=v.unit_id AND mm.status IN ('active','suspended') AND mm.role_key IN ('resident_tenant','resident_owner')
 		    ORDER BY (mm.role_key='resident_tenant') DESC LIMIT 1)),
 		v.visitor_name, v.visitor_phone, v.purpose, v.company, v.vehicle_number, v.visitor_count, v.note, v.source,
-		` + s.eff() + `, v.pass_code, v.expected_from, v.expected_until, v.entered_at, v.exited_at, v.decided_at, v.decision_reason, v.created_at`
+		` + s.eff() + `, v.pass_code, v.expected_from, v.expected_until, v.entered_at, v.exited_at, v.decided_at, v.decision_reason, v.created_at,
+		g.name, (v.photo_key IS NOT NULL), v.awaiting_photo, v.rerings::int`
 }
 
 const fromJoin = ` FROM visits v JOIN units un ON un.id=v.unit_id JOIN blocks b ON b.id=un.block_id
-	LEFT JOIN memberships hm ON hm.id=v.host_membership_id LEFT JOIN users hu ON hu.id=hm.user_id `
+	LEFT JOIN memberships hm ON hm.id=v.host_membership_id LEFT JOIN users hu ON hu.id=hm.user_id LEFT JOIN gates g ON g.id=v.gate_id `
 
 func (s *Service) scan(row pgx.Row, extra ...any) (*Visit, error) {
 	var v Visit
 	dest := []any{&v.ID, &v.UnitID, &v.UnitNumber, &v.BlockCode, &v.HostName, &v.VisitorName, &v.VisitorPhone, &v.Purpose, &v.Company,
 		&v.VehicleNumber, &v.VisitorCount, &v.Note, &v.Source, &v.Status, &v.PassCode, &v.ExpectedFrom, &v.ExpectedUntil, &v.EnteredAt,
-		&v.ExitedAt, &v.DecidedAt, &v.DecisionReason, &v.CreatedAt}
+		&v.ExitedAt, &v.DecidedAt, &v.DecisionReason, &v.CreatedAt, &v.GateName, &v.HasPhoto, &v.AwaitingPhoto, &v.Rerings}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -360,7 +386,9 @@ func (s *Service) Cancel(ctx context.Context, p authctx.Principal, id uuid.UUID)
 		return nil, s.classify(ctx, p.SocietyID, id, &unitID)
 	}
 	s.logv(ctx, p, "visit.cancel", id, nil)
-	return s.one(ctx, p.SocietyID, id, &unitID)
+	v, err := s.one(ctx, p.SocietyID, id, &unitID)
+	s.emit(ctx, "visit.cancelled", v)
+	return v, err
 }
 
 // Decide lets a member of the flat approve or reject a waiting walk-in.
@@ -368,6 +396,11 @@ func (s *Service) Decide(ctx context.Context, p authctx.Principal, id uuid.UUID,
 	unitID, _, err := s.unitOf(ctx, p)
 	if err != nil {
 		return nil, err
+	}
+	var pending bool
+	_ = s.pool.QueryRow(ctx, `SELECT awaiting_photo FROM visits WHERE id=$1 AND society_id=$2 AND unit_id=$3`, id, p.SocietyID, unitID).Scan(&pending)
+	if pending {
+		return nil, ErrPhotoPending
 	}
 	status := StatusRejected
 	if approve {
@@ -384,18 +417,43 @@ func (s *Service) Decide(ctx context.Context, p authctx.Principal, id uuid.UUID,
 		return nil, s.classify(ctx, p.SocietyID, id, &unitID)
 	}
 	s.logv(ctx, p, "visit.decision", id, map[string]any{"decision": status})
-	return s.one(ctx, p.SocietyID, id, &unitID)
+	v, err := s.one(ctx, p.SocietyID, id, &unitID)
+	s.emit(ctx, "visit.decided", v)
+	return v, err
 }
 
 // ── sweeper ──────────────────────────────────────────────────────────────────
 
 // Sweep persists the expiry that reads already show.
 func (s *Service) Sweep(ctx context.Context) (int64, error) {
-	tag, err := s.pool.Exec(ctx, fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		UPDATE visits SET status='expired', updated_at=now()
 		WHERE (status IN ('invited','approved') AND expected_until < now())
-		   OR (status='waiting' AND created_at < now() - interval '%d seconds')`, int(s.walkinWait.Seconds())))
-	return tag.RowsAffected(), err
+		   OR (status='waiting' AND created_at < now() - interval '%d seconds')
+		RETURNING id, society_id, source`, int(s.walkinWait.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	type hit struct{ id, soc uuid.UUID }
+	var walkIns []hit
+	var n int64
+	for rows.Next() {
+		var h hit
+		var src string
+		if rows.Scan(&h.id, &h.soc, &src) == nil {
+			n++
+			if src == "walk_in" {
+				walkIns = append(walkIns, h)
+			}
+		}
+	}
+	rows.Close()
+	for _, h := range walkIns { // only gate requests matter live
+		if v, err := s.one(ctx, h.soc, h.id, nil); err == nil {
+			s.emit(ctx, "visit.expired", v)
+		}
+	}
+	return n, rows.Err()
 }
 
 // RunSweeper calls Sweep every interval until ctx is cancelled.

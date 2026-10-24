@@ -90,6 +90,9 @@ func Demo(ctx context.Context, pool *pgxpool.Pool) error {
 			return err
 		}
 	}
+	if err := demoGuard(ctx, pool); err != nil {
+		return err
+	}
 	return demoVisits(ctx, pool)
 }
 
@@ -136,6 +139,25 @@ func demoVisits(ctx context.Context, pool *pgxpool.Pool) error {
 			                    expected_from, expected_until, entered_at, exited_at, decision_reason, created_at)
 			SELECT $1, un.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16 FROM units un WHERE un.society_id=$1 AND un.number=$2`,
 			SocietyID, r.unit, host, r.name, r.purpose, company, vehicle, r.source, r.status, code, r.from, r.until, r.entered, r.exited, reason, r.created); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GuardPhone is the demo guard (dev OTP 123456) with Main Gate and an open shift.
+const GuardPhone = "7777777777"
+
+func demoGuard(ctx context.Context, pool *pgxpool.Pool) error {
+	for _, q := range []string{
+		`INSERT INTO gates (society_id, name) VALUES ($1,'Main Gate') ON CONFLICT DO NOTHING`,
+		`INSERT INTO gates (society_id, name) VALUES ($1,'Back Gate') ON CONFLICT DO NOTHING`,
+		`INSERT INTO users (full_name, phone) VALUES ('Ramesh Singh','` + GuardPhone + `') ON CONFLICT (phone) DO NOTHING`,
+		`INSERT INTO memberships (user_id, society_id, role_key)
+		   SELECT u.id, $1, 'guard' FROM users u WHERE u.phone='` + GuardPhone + `'
+		   AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id=u.id AND m.society_id=$1)`,
+	} {
+		if _, err := pool.Exec(ctx, q, SocietyID); err != nil {
 			return err
 		}
 	}

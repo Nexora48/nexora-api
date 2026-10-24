@@ -92,14 +92,26 @@ func (r *Repository) GetMembership(ctx context.Context, id uuid.UUID) (*Membersh
 }
 
 // UpsertDevice records the calling device for push notifications (M6).
-func (r *Repository) UpsertDevice(ctx context.Context, userID uuid.UUID, deviceID, platform, fcmToken, appVersion string) error {
+func (r *Repository) UpsertDevice(ctx context.Context, userID uuid.UUID, deviceID, platform, fcmToken, appVersion, app string) error {
+	// a push token belongs to one person at a time: someone else signing in on this phone takes it over
+	if fcmToken != "" {
+		if _, err := r.pool.Exec(ctx, `UPDATE devices SET fcm_token=NULL WHERE fcm_token=$1 AND user_id <> $2`, fcmToken, userID); err != nil {
+			return err
+		}
+	}
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO devices (user_id, device_id, platform, fcm_token, app_version)
-		VALUES ($1,$2,$3,NULLIF($4,''),$5)
+		INSERT INTO devices (user_id, device_id, platform, fcm_token, app_version, app)
+		VALUES ($1,$2,$3,NULLIF($4,''),$5,$6)
 		ON CONFLICT (user_id, device_id) DO UPDATE
 		SET platform=EXCLUDED.platform,
 		    fcm_token=COALESCE(EXCLUDED.fcm_token, devices.fcm_token),
-		    app_version=EXCLUDED.app_version, last_seen_at=now()`,
-		userID, deviceID, platform, fcmToken, appVersion)
+		    app_version=EXCLUDED.app_version, app=EXCLUDED.app, last_seen_at=now()`,
+		userID, deviceID, platform, fcmToken, appVersion, app)
+	return err
+}
+
+// ClearDeviceToken stops push to one device (called on logout).
+func (r *Repository) ClearDeviceToken(ctx context.Context, userID uuid.UUID, deviceID string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE devices SET fcm_token=NULL WHERE user_id=$1 AND device_id=$2`, userID, deviceID)
 	return err
 }

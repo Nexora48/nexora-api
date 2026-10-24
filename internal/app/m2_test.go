@@ -44,7 +44,7 @@ func newSoc(t *testing.T) soc {
 	ctx := context.Background()
 	id, uid := uuid.New(), uuid.New()
 	email := fmt.Sprintf("admin-%s@test.local", id.String()[:8])
-	mustExec(t, ctx, `INSERT INTO societies (id, name, slug) VALUES ($1,$2,$3)`, id, "Society "+id.String()[:6], "s-"+id.String()[:8])
+	mustExec(t, ctx, `INSERT INTO societies (id, name, slug, walkin_photo_required) VALUES ($1,$2,$3,false)`, id, "Society "+id.String()[:6], "s-"+id.String()[:8])
 	mustExec(t, ctx, `INSERT INTO users (id, full_name, phone, email, password_hash) VALUES ($1,'Admin',$2,$3,$4)`, uid, nextPhone(), email, adminHash)
 	mustExec(t, ctx, `INSERT INTO memberships (user_id, society_id, role_key) VALUES ($1,$2,'society_admin')`, uid, id)
 	r := call(t, "POST", "/api/v1/auth/login", "", map[string]any{"email": email, "password": "Admin@123"})

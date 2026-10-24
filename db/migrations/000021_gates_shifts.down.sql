@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS gate_events;
+ALTER TABLE societies DROP COLUMN IF EXISTS walkin_photo_required;
+ALTER TABLE visits DROP COLUMN IF EXISTS last_ring_at, DROP COLUMN IF EXISTS rerings, DROP COLUMN IF EXISTS awaiting_photo,
+    DROP COLUMN IF EXISTS photo_key, DROP COLUMN IF EXISTS gate_id;
+DROP TABLE IF EXISTS guard_shifts;
+DROP TABLE IF EXISTS gates;

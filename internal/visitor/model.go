@@ -45,6 +45,10 @@ type Visit struct {
 	DecidedAt      *time.Time `json:"decided_at,omitempty"`
 	DecisionReason *string    `json:"decision_reason,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
+	GateName       *string    `json:"gate_name,omitempty"`
+	HasPhoto       bool       `json:"has_photo"`
+	AwaitingPhoto  bool       `json:"awaiting_photo,omitempty"`
+	Rerings        int        `json:"rerings,omitempty"`
 }
 
 // GateVisit is what a guard may see: no phone number, no private note.
@@ -65,12 +69,19 @@ type GateVisit struct {
 	ExpectedUntil time.Time  `json:"expected_until"`
 	EnteredAt     *time.Time `json:"entered_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
+	DecidedAt     *time.Time `json:"decided_at,omitempty"`
+	Reason        *string    `json:"decision_reason,omitempty"`
+	GateName      *string    `json:"gate_name,omitempty"`
+	HasPhoto      bool       `json:"has_photo"`
+	AwaitingPhoto bool       `json:"awaiting_photo,omitempty"`
+	Rerings       int        `json:"rerings,omitempty"`
 }
 
 func (v Visit) ForGate() GateVisit {
 	return GateVisit{ID: v.ID, VisitorName: v.VisitorName, Purpose: v.Purpose, Company: v.Company, VehicleNumber: v.VehicleNumber,
 		VisitorCount: v.VisitorCount, UnitID: v.UnitID, UnitNumber: v.UnitNumber, BlockCode: v.BlockCode, HostName: v.HostName,
-		Source: v.Source, Status: v.Status, ExpectedFrom: v.ExpectedFrom, ExpectedUntil: v.ExpectedUntil, EnteredAt: v.EnteredAt, CreatedAt: v.CreatedAt}
+		Source: v.Source, Status: v.Status, ExpectedFrom: v.ExpectedFrom, ExpectedUntil: v.ExpectedUntil, EnteredAt: v.EnteredAt, CreatedAt: v.CreatedAt,
+		DecidedAt: v.DecidedAt, Reason: v.DecisionReason, GateName: v.GateName, HasPhoto: v.HasPhoto, AwaitingPhoto: v.AwaitingPhoto, Rerings: v.Rerings}
 }
 
 type VerifyResult struct {

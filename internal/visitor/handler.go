@@ -2,6 +2,7 @@ package visitor
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -303,4 +304,92 @@ func (h *Handler) AdminExport(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.svc.AdminExport(r.Context(), principal(r), f, w); err != nil {
 		httpx.Fail(w, err) // only reachable before the first byte is written
 	}
+}
+
+// ── M5: photo, cancel, ring ──────────────────────────────────────────────────
+
+func (h *Handler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
+	id, err := visitID(r)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPhotoBytes+64<<10)
+	f, _, err := r.FormFile("file")
+	if err != nil {
+		httpx.Fail(w, ErrBadPhoto)
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxPhotoBytes+1))
+	if err != nil {
+		httpx.Fail(w, ErrBadPhoto)
+		return
+	}
+	v, err := h.svc.AttachPhoto(r.Context(), principal(r), id, data)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, v.ForGate(), nil)
+}
+
+func (h *Handler) Photo(w http.ResponseWriter, r *http.Request) {
+	id, err := visitID(r)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	b, ct, err := h.svc.Photo(r.Context(), principal(r), id)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(b)
+}
+
+func (h *Handler) GateCancel(w http.ResponseWriter, r *http.Request) {
+	id, err := visitID(r)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	v, err := h.svc.GateCancel(r.Context(), principal(r), id)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, v.ForGate(), nil)
+}
+
+func (h *Handler) Ring(w http.ResponseWriter, r *http.Request) {
+	id, err := visitID(r)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	v, err := h.svc.Ring(r.Context(), principal(r), id)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, v.ForGate(), nil)
+}
+
+// GateGet returns one visit as the guard may see it (used to resync a waiting screen).
+func (h *Handler) GateGet(w http.ResponseWriter, r *http.Request) {
+	id, err := visitID(r)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	v, err := h.svc.one(r.Context(), principal(r).SocietyID, id, nil)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, v.ForGate(), nil)
 }

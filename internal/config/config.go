@@ -31,6 +31,11 @@ type Config struct {
 	VisitorMaxWindow  time.Duration
 	VisitorWalkinWait time.Duration
 	ShutdownTimeout   time.Duration
+
+	// Push + media (M5). Empty values select the dev implementations.
+	FCMProjectID       string
+	FCMCredentialsFile string
+	BlobPath           string // local-disk photo store; empty disables walk-in photos
 }
 
 // IsDev enables dev-only behaviour (fixed OTP, console SMS, seed data).
@@ -57,6 +62,12 @@ func Load() (Config, error) {
 	}
 	if v, err := strconv.Atoi(os.Getenv("VISITOR_WALKIN_TIMEOUT_MIN")); err == nil && v > 0 {
 		cfg.VisitorWalkinWait = time.Duration(v) * time.Minute
+	}
+	cfg.FCMProjectID = os.Getenv("FCM_PROJECT_ID")
+	cfg.FCMCredentialsFile = os.Getenv("FCM_CREDENTIALS_FILE")
+	cfg.BlobPath = os.Getenv("BLOB_PATH")
+	if cfg.BlobPath == "" && env == "dev" {
+		cfg.BlobPath = "./.data/blobs"
 	}
 	cfg.PlatformJWTSecret = get("PLATFORM_JWT_SECRET", "")
 	cfg.PlatformEncKey = get("PLATFORM_ENC_KEY", "")
