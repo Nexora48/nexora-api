@@ -44,6 +44,7 @@ type Config struct {
 
 	// Community (M7)
 	ComplaintAutoclose time.Duration
+	AmenityReminder    time.Duration
 	ComplaintReopen    time.Duration
 	AttachmentMaxMB    int
 }
@@ -92,6 +93,10 @@ func Load() (Config, error) {
 	}
 	if v, err := strconv.Atoi(os.Getenv("ATTACHMENT_MAX_MB")); err == nil && v > 0 {
 		cfg.AttachmentMaxMB = v
+	}
+	cfg.AmenityReminder = time.Hour
+	if v, err := strconv.Atoi(os.Getenv("AMENITY_REMINDER_MIN")); err == nil && v > 0 {
+		cfg.AmenityReminder = time.Duration(v) * time.Minute
 	}
 	cfg.FCMProjectID = os.Getenv("FCM_PROJECT_ID")
 	cfg.FCMCredentialsFile = os.Getenv("FCM_CREDENTIALS_FILE")

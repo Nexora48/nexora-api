@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Nexora48/nexora-api/internal/attendance"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,9 +28,14 @@ type WalkInPayload struct {
 
 type BatchEvent struct {
 	ClientEventID string         `json:"client_event_id" validate:"required,min=8,max=64"`
-	Type          string         `json:"type" validate:"required,oneof=check_in check_out walk_in"`
+	Type          string         `json:"type" validate:"required,oneof=check_in check_out walk_in attendance_in attendance_out"`
 	VisitID       string         `json:"visit_id" validate:"omitempty,uuid"`
 	WalkIn        *WalkInPayload `json:"walk_in" validate:"omitempty"`
+	// attendance_in / attendance_out
+	SubjectType string     `json:"subject_type" validate:"omitempty,oneof=helper staff"`
+	SubjectID   string     `json:"subject_id" validate:"omitempty,uuid"`
+	GateID      *string    `json:"gate_id" validate:"omitempty,uuid"`
+	At          *time.Time `json:"at"`
 }
 
 type BatchRequest struct {
@@ -98,6 +105,16 @@ func (s *Service) one(ctx context.Context, p authctx.Principal, vs *visitor.Serv
 		}
 		if runErr == nil {
 			data = v.ForGate()
+		}
+	case "attendance_in", "attendance_out":
+		if !s.attendanceOn(ctx, p.SocietyID) {
+			runErr = httpx.NewError(http.StatusForbidden, "FEATURE_DISABLED", "this service is not enabled for your society")
+			break
+		}
+		var rec *attendance.Record
+		rec, runErr = s.att.Mark(ctx, p, ev.Type == "attendance_in", ev.SubjectType, ev.SubjectID, ev.GateID, ev.At)
+		if runErr == nil {
+			data = rec
 		}
 	case "walk_in":
 		if ev.WalkIn == nil {

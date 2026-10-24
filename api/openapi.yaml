@@ -1,5 +1,5 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 0.8.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls. Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 0.9.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls + M8 amenity booking, daily help, staff attendance. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: "http://localhost:8080" }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
@@ -345,6 +345,100 @@ paths:
     post: { summary: "Office: close now", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
   /api/v1/society/polls/{id}/export:
     get: { summary: "Office: CSV results", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: text/csv } } }
+  /api/v1/amenities:
+    get: { summary: "Amenities I can book (active). Feature: amenities", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/amenities/{id}:
+    get: { summary: "One amenity with hours, blackouts and photos", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/amenities/{id}/slots:
+    get: { summary: "Slots of ?date=YYYY-MM-DD in society time with taken/bookable/reason (PAST, TOO_SOON, TOO_FAR, FULL, YOURS, BLACKOUT)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/amenities/{id}/bookings:
+    post: { summary: "Book {slot_start, people?, note?}. 409 SLOT_FULL / ALREADY_BOOKED, 422 CLOSED / BLACKOUT / PAST / OUTSIDE_WINDOW / FLAT_LIMIT / INVALID_SLOT. Pending when the amenity needs approval", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "201": { description: Created } } }
+  /api/v1/amenities/{id}/photos/{aid}:
+    get: { summary: "Amenity photo", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/amenities/bookings:
+    get: { summary: "My flat's bookings, ?group=upcoming|past", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/amenities/bookings/{id}/cancel:
+    post: { summary: "Cancel my flat's booking. 409 CANCEL_CUTOFF inside the cut-off", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/helpers:
+    get: { summary: "Daily help of my flat with today's status. Feature: daily_help", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Register {full_name, phone, kind, id_last4?, days?, window_from?, window_to?}; the same phone in the society is linked, not duplicated. 403 BLACKLISTED, 409 ALREADY_LINKED", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/helpers/{id}:
+    get: { summary: "One helper of my flat", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    delete: { summary: "Remove from my flat only", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/helpers/{id}/schedule:
+    put: { summary: "Days, window and notification choices for my flat", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/helpers/{id}/pass:
+    get: { summary: "Permanent QR (NXH1:) and the 6-digit code", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/helpers/{id}/pass/regenerate:
+    post: { summary: "New 6-digit code; the QR stays valid", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/helpers/{id}/photo:
+    get: { summary: "Photo", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    post: { summary: "Upload a photo (multipart file) while the helper is not verified", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/helpers/{id}/rating:
+    put: { summary: "Rate {rating 1-5, comment?} for my flat", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/attendance/resolve:
+    post: { summary: "Guard: who does this {qr} or {code} belong to; never returns phone or ID digits. Feature: staff_attendance", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/attendance/check-in:
+    post: { summary: "Guard: {subject_type, subject_id, gate_id?, at?}. 409 ALREADY_INSIDE, 403 BLOCKED", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/attendance/check-out:
+    post: { summary: "Guard: check out. 409 NOT_INSIDE", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/attendance/inside:
+    get: { summary: "Guard: helpers and staff inside now", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/attendance/photo/{type}/{id}:
+    get: { summary: "Guard: photo of a helper or staff member", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/amenities:
+    get: { summary: "Office: all amenities", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Office: create {name, capacity, slot_minutes 30/60/90/120, hours[], limits, fee_amount, deposit_amount, requires_approval}", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/amenities/stats:
+    get: { summary: "Office: 30-day usage per amenity", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/amenities/{id}:
+    get: { summary: "Office: one amenity", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    put: { summary: "Office: edit", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    delete: { summary: "Office: deactivate", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/amenities/{id}/blackouts:
+    post: { summary: "Office: close a date {date, reason?}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "201": { description: Created } } }
+  /api/v1/society/amenities/{id}/photos:
+    post: { summary: "Office: add a photo (max 3)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "201": { description: Created } } }
+  /api/v1/society/bookings:
+    get: { summary: "Office: bookings, filters amenity_id, status, flat, from, to", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/bookings/export:
+    get: { summary: "Office: CSV", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/bookings/{id}/approve:
+    post: { summary: "Office: approve a pending booking", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/bookings/{id}/reject:
+    post: { summary: "Office: reject {reason}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/bookings/{id}/cancel:
+    post: { summary: "Office: cancel {reason}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/bookings/{id}/no-show:
+    post: { summary: "Office: mark no-show after the slot ended", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/helpers:
+    get: { summary: "Office: daily help register, filters status, kind, q", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/helpers/{id}:
+    get: { summary: "Office: one helper with all flats", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/helpers/{id}/verify:
+    post: { summary: "Office: verify", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/helpers/{id}/suspend:
+    post: { summary: "Office: suspend {reason}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/helpers/{id}/blacklist:
+    post: { summary: "Office: blacklist {reason}; blocks registration of the same phone", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/helpers/{id}/restore:
+    post: { summary: "Office: restore to pending", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/staff:
+    get: { summary: "Office: society staff", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Office: add staff {full_name, phone, role, shift_from, shift_to, work_days}", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/staff/{id}:
+    get: { summary: "Office: one staff member", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    put: { summary: "Office: edit / deactivate", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/staff/{id}/pass:
+    get: { summary: "Office: staff QR (NXS1:) and code", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/staff/{id}/pass/regenerate:
+    post: { summary: "Office: new code", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/attendance:
+    get: { summary: "Office: monthly attendance sheet ?month=YYYY-MM&type=helper|staff", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/attendance/export:
+    get: { summary: "Office: CSV sheet", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/attendance/manual:
+    post: { summary: "Office: add a missed record {subject_type, subject_id, in_at, out_at, note?}", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:

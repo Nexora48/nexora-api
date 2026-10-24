@@ -100,6 +100,9 @@ func Demo(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := demoM7(ctx, pool); err != nil {
 		return err
 	}
+	if err := demoM8(ctx, pool); err != nil {
+		return err
+	}
 	return demoVisits(ctx, pool)
 }
 
@@ -306,6 +309,133 @@ func demoM7(ctx context.Context, pool *pgxpool.Pool) error {
 			SELECT $1, u.id, (SELECT id FROM poll_options WHERE poll_id=$1 AND position=$2), $3 FROM units u WHERE u.society_id=$4 AND u.number=$5`,
 			pid, []int{0, 0, 1}[i], ResidentID, SocietyID, number); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// demoM8 adds four amenities with bookings for A101, daily help for A101/A102 and society staff with today's attendance.
+func demoM8(ctx context.Context, pool *pgxpool.Pool) error {
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM amenities WHERE society_id=$1)`, SocietyID).Scan(&exists); err != nil || exists {
+		return err
+	}
+	type am struct {
+		name, desc          string
+		capacity, slot      int
+		fee, deposit        float64
+		approval            bool
+		opens, closes       string
+		maxUp, maxWeek, cut int
+	}
+	list := []am{
+		{"Clubhouse", "Air-conditioned hall for birthdays and meetings, seats 60.", 1, 120, 1500, 2000, true, "09:00", "22:00", 2, 3, 24},
+		{"Gym", "Fully equipped gym. Hourly slots, up to 6 people at a time.", 6, 60, 0, 0, false, "05:00", "22:00", 3, 7, 1},
+		{"Swimming Pool", "Pool with lifeguard. Closed on Mondays for cleaning.", 10, 60, 0, 0, false, "06:00", "20:00", 3, 5, 1},
+		{"Tennis Court", "Floodlit court, one booking per slot.", 1, 60, 100, 0, false, "06:00", "21:00", 3, 5, 2},
+	}
+	ids := map[string]string{}
+	for _, a := range list {
+		var id string
+		if err := pool.QueryRow(ctx, `INSERT INTO amenities (society_id, name, description, capacity, slot_minutes, min_notice_minutes, max_days_ahead, max_upcoming_per_flat, max_per_week_per_flat,
+			cancel_cutoff_hours, fee_amount, deposit_amount, requires_approval) VALUES ($1,$2,$3,$4,$5,30,14,$6,$7,$8,$9,$10,$11) RETURNING id::text`,
+			SocietyID, a.name, a.desc, a.capacity, a.slot, a.maxUp, a.maxWeek, a.cut, a.fee, a.deposit, a.approval).Scan(&id); err != nil {
+			return fmt.Errorf("demo m8 amenity: %w", err)
+		}
+		ids[a.name] = id
+		for d := 0; d < 7; d++ {
+			if a.name == "Swimming Pool" && d == 1 {
+				continue
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO amenity_hours (amenity_id, weekday, opens, closes) VALUES ($1,$2,$3::time,$4::time)`, id, d, a.opens, a.closes); err != nil {
+				return err
+			}
+		}
+	}
+	// bookings for the demo flat: tomorrow's gym, the day after tomorrow's tennis, a clubhouse request, and some history
+	type bk struct {
+		amenity, status string
+		dayOffset, hour int
+		minutes         int
+		fee, deposit    float64
+		charge          string
+	}
+	for _, b := range []bk{
+		{"Gym", "confirmed", 1, 7, 60, 0, 0, "none"},
+		{"Tennis Court", "confirmed", 2, 18, 60, 100, 0, "pending"},
+		{"Clubhouse", "pending", 5, 17, 120, 1500, 2000, "pending"},
+		{"Gym", "completed", -2, 7, 60, 0, 0, "none"},
+		{"Swimming Pool", "cancelled", -1, 17, 60, 0, 0, "none"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO amenity_bookings (society_id, amenity_id, unit_id, booked_by_membership_id, slot_start, slot_end, status, people, fee_amount, deposit_amount, charge_status, created_at)
+			SELECT $1, $2::uuid, u.id, $3, s.st, s.st + make_interval(mins => $7::int), $4, 2, $8, $9, $10, now() - interval '3 days'
+			FROM units u, societies so,
+			LATERAL (SELECT ((date_trunc('day', now() AT TIME ZONE so.timezone) + make_interval(days => $5::int, hours => $6::int)) AT TIME ZONE so.timezone) AS st) s
+			WHERE u.society_id=$1 AND u.number='A101' AND so.id=$1`,
+			SocietyID, ids[b.amenity], ResidentMem, b.status, b.dayOffset, b.hour, b.minutes, b.fee, b.deposit, b.charge); err != nil {
+			return fmt.Errorf("demo m8 booking: %w", err)
+		}
+	}
+
+	// daily help: Sunita works for A101 and A102, Mohan for A101 only (not verified yet)
+	type hp struct {
+		name, phone, kind, code, status, last4 string
+		flats                                  []string
+	}
+	for _, h := range []hp{
+		{"Sunita Devi", "9800000001", "maid", "482913", "verified", "4821", []string{"A101", "A102"}},
+		{"Mohan Lal", "9800000002", "driver", "620417", "pending", "7305", []string{"A101"}},
+		{"Kavita Rao", "9800000003", "cook", "135790", "verified", "1190", []string{"A102"}},
+	} {
+		var id string
+		if err := pool.QueryRow(ctx, `INSERT INTO helpers (society_id, full_name, phone, kind, id_last4, status, pass_code, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text`,
+			SocietyID, h.name, h.phone, h.kind, h.last4, h.status, h.code, ResidentMem).Scan(&id); err != nil {
+			return fmt.Errorf("demo m8 helper: %w", err)
+		}
+		for _, f := range h.flats {
+			if _, err := pool.Exec(ctx, `INSERT INTO helper_flats (helper_id, unit_id, days, window_from, window_to)
+				SELECT $1::uuid, u.id, '{0,1,2,3,4,5,6}', '06:00', '12:00' FROM units u WHERE u.society_id=$2 AND u.number=$3`, id, SocietyID, f); err != nil {
+				return err
+			}
+		}
+		if h.status == "verified" {
+			if _, err := pool.Exec(ctx, `INSERT INTO helper_ratings (helper_id, unit_id, rating, comment) SELECT $1::uuid, u.id, 5, 'Always on time' FROM units u WHERE u.society_id=$2 AND u.number=$3`, id, SocietyID, h.flats[0]); err != nil {
+				return err
+			}
+		}
+	}
+
+	// society staff and attendance: Sunita is inside now, Ramesh left an hour ago, the electrician has not come
+	for _, st := range []struct{ name, phone, role, code, from, to string }{
+		{"Ramesh Kumar", "9810000001", "gardener", "246801", "06:00", "14:00"},
+		{"Lakshmi Bai", "9810000002", "housekeeping", "369258", "08:00", "16:00"},
+		{"Anil Verma", "9810000003", "electrician", "159753", "10:00", "18:00"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO society_staff (society_id, full_name, phone, role, pass_code, shift_from, shift_to) VALUES ($1,$2,$3,$4,$5,$6::time,$7::time)`,
+			SocietyID, st.name, st.phone, st.role, st.code, st.from, st.to); err != nil {
+			return fmt.Errorf("demo m8 staff: %w", err)
+		}
+	}
+	for _, a := range []struct {
+		table, phone string
+		inAgo, out   string
+		late         bool
+	}{
+		{"helpers", "9800000001", "2 hours", "", false},
+		{"society_staff", "9810000001", "7 hours", "1 hour", false},
+		{"society_staff", "9810000002", "6 hours", "", true},
+	} {
+		typ := "helper"
+		if a.table == "society_staff" {
+			typ = "staff"
+		}
+		out := "NULL"
+		if a.out != "" {
+			out = "now() - interval '" + a.out + "'"
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO attendance_logs (society_id, subject_type, subject_id, in_at, out_at, late)
+			SELECT $1, '`+typ+`', t.id, now() - interval '`+a.inAgo+`', `+out+`, $3 FROM `+a.table+` t WHERE t.society_id=$1 AND t.phone=$2`, SocietyID, a.phone, a.late); err != nil {
+			return fmt.Errorf("demo m8 attendance: %w", err)
 		}
 	}
 	return nil

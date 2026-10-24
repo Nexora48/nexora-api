@@ -3,6 +3,9 @@ package app
 
 import (
 	"context"
+	"github.com/Nexora48/nexora-api/internal/amenity"
+	"github.com/Nexora48/nexora-api/internal/attendance"
+	"github.com/Nexora48/nexora-api/internal/helper"
 	"log/slog"
 	"net/http"
 	"time"
@@ -64,6 +67,8 @@ type App struct {
 	Notices    *notice.Service
 	Complaints *complaint.Service
 	Polls      *poll.Service
+	Amenities  *amenity.Service
+	Attendance *attendance.Service
 	Notify     *notify.Service
 	gates      *gate.Service
 }
@@ -78,6 +83,8 @@ func (a *App) Start(ctx context.Context) {
 	go a.Notices.RunSweeper(ctx, time.Minute)
 	go a.Complaints.RunSweeper(ctx, time.Hour)
 	go a.Polls.RunSweeper(ctx, time.Minute)
+	go a.Amenities.RunSweeper(ctx, time.Minute)
+	go a.Attendance.RunSweeper(ctx, 10*time.Minute)
 }
 
 func New(d Deps) *App {
@@ -142,7 +149,14 @@ func New(d Deps) *App {
 			d.Log.Error("photo storage disabled", "err", err)
 		}
 	}
+	amenitySvc := amenity.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.AmenityReminder)
+	amenityH := amenity.NewHandler(amenitySvc, files)
+	helperSvc := helper.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
+	helperH := helper.NewHandler(helperSvc, files)
+	attendSvc := attendance.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
+	attendH := attendance.NewHandler(attendSvc, files)
 	gateSvc := gate.NewService(d.Pool, aud, hub)
+	gateSvc.SetAttendance(attendSvc, feats)
 	gateH := gate.NewHandler(gateSvc, visitorSvc)
 	wsH := realtime.NewHandler(hub, tokens, d.Pool, d.Cfg.CORSOrigins)
 	need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
@@ -293,6 +307,41 @@ func New(d Deps) *App {
 			r.With(need("complaint.create")).Post("/{id}/reopen", complaintH.Reopen)
 			r.With(need("complaint.create")).Post("/{id}/rate", complaintH.Rate)
 		})
+		r.Route("/amenities", func(r chi.Router) {
+			r.Use(protect("amenity.book", "amenities")...)
+			r.Get("/", amenityH.List)
+			r.Get("/bookings", amenityH.Mine)
+			r.Post("/bookings/{id}/cancel", amenityH.Cancel)
+			r.Get("/{id}", amenityH.Get)
+			r.Get("/{id}/slots", amenityH.Slots)
+			r.Post("/{id}/bookings", amenityH.Book)
+			r.Get("/{id}/photos/{aid}", amenityH.Photo)
+		})
+		r.Route("/helpers", func(r chi.Router) {
+			r.Use(protect("helper.read", "daily_help")...)
+			r.Get("/", helperH.List)
+			r.Get("/{id}", helperH.Get())
+			r.Get("/{id}/pass", helperH.Pass())
+			r.Get("/{id}/photo", helperH.Photo())
+			r.Group(func(r chi.Router) {
+				r.Use(need("helper.manage"))
+				r.Post("/", helperH.Register)
+				r.Put("/{id}/schedule", helperH.UpdateLink)
+				r.Delete("/{id}", helperH.Unlink())
+				r.Post("/{id}/pass/regenerate", helperH.RegenerateCode())
+				r.Post("/{id}/photo", helperH.UploadPhoto())
+				r.Put("/{id}/rating", helperH.Rate)
+			})
+		})
+		// Gate attendance for guards (daily help and society staff)
+		r.Route("/attendance", func(r chi.Router) {
+			r.Use(protect("attendance.log", "staff_attendance")...)
+			r.Post("/resolve", attendH.Resolve)
+			r.Post("/check-in", attendH.CheckIn())
+			r.Post("/check-out", attendH.CheckOut())
+			r.Get("/inside", attendH.Inside)
+			r.Get("/photo/{type}/{id}", attendH.GatePhoto)
+		})
 		r.Route("/polls", func(r chi.Router) {
 			r.Use(protect("poll.read", "polls")...)
 			r.Get("/", pollH.List)
@@ -345,6 +394,54 @@ func New(d Deps) *App {
 				r.Post("/complaints/{id}/priority", complaintH.SetPriority)
 				r.Post("/complaints/{id}/comments", complaintH.OfficeComment)
 				r.Get("/office-members", complaintH.OfficeMembers)
+			})
+			r.Group(func(r chi.Router) { // amenities desk
+				r.Use(protect("amenity.manage", "amenities")...)
+				r.Get("/amenities", amenityH.AdminList)
+				r.Post("/amenities", amenityH.Create)
+				r.Get("/amenities/stats", amenityH.Stats)
+				r.Get("/amenities/{id}", amenityH.AdminGet)
+				r.Put("/amenities/{id}", amenityH.Update)
+				r.Delete("/amenities/{id}", amenityH.Deactivate)
+				r.Post("/amenities/{id}/blackouts", amenityH.AddBlackout)
+				r.Delete("/amenities/{id}/blackouts/{bid}", amenityH.RemoveBlackout)
+				r.Post("/amenities/{id}/photos", amenityH.AddPhoto)
+				r.Get("/amenities/{id}/photos/{aid}", amenityH.Photo)
+				r.Delete("/amenities/{id}/photos/{aid}", amenityH.RemovePhoto)
+				r.Get("/bookings", amenityH.AdminBookings)
+				r.Get("/bookings/export", amenityH.Export)
+				r.Post("/bookings/{id}/approve", amenityH.Approve())
+				r.Post("/bookings/{id}/reject", amenityH.Reject())
+				r.Post("/bookings/{id}/cancel", amenityH.OfficeCancel())
+				r.Post("/bookings/{id}/no-show", amenityH.NoShow())
+			})
+			r.Group(func(r chi.Router) { // daily help register (verification)
+				r.Use(protect("helper.verify", "daily_help")...)
+				r.Get("/helpers", helperH.AdminList)
+				r.Get("/helpers/{id}", helperH.AdminGet())
+				r.Get("/helpers/{id}/photo", helperH.AdminPhoto())
+				r.Post("/helpers/{id}/photo", helperH.AdminUploadPhoto())
+				r.Post("/helpers/{id}/verify", helperH.Decide("verify"))
+				r.Post("/helpers/{id}/suspend", helperH.Decide("suspend"))
+				r.Post("/helpers/{id}/blacklist", helperH.Decide("blacklist"))
+				r.Post("/helpers/{id}/restore", helperH.Decide("restore"))
+			})
+			r.Group(func(r chi.Router) { // staff registry and manual attendance
+				r.Use(protect("staff.manage", "staff_attendance")...)
+				r.Get("/staff", attendH.ListStaff)
+				r.Post("/staff", attendH.CreateStaff)
+				r.Get("/staff/{id}", attendH.GetStaff)
+				r.Put("/staff/{id}", attendH.UpdateStaff)
+				r.Get("/staff/{id}/pass", attendH.StaffPass())
+				r.Post("/staff/{id}/pass/regenerate", attendH.StaffNewCode())
+				r.Post("/staff/{id}/photo", attendH.StaffPhoto)
+				r.Post("/attendance/manual", attendH.Manual)
+			})
+			r.Group(func(r chi.Router) { // attendance sheets (admin + committee)
+				r.Use(protect("attendance.read", "staff_attendance")...)
+				r.Get("/attendance", attendH.Sheet)
+				r.Get("/attendance/export", attendH.Export)
+				r.Get("/attendance/{type}/{id}", attendH.Log)
 			})
 			r.Group(func(r chi.Router) { // polls
 				r.Use(protect("poll.manage", "polls")...)
@@ -419,5 +516,5 @@ func New(d Deps) *App {
 			})
 		})
 	})
-	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notices: noticeSvc, Complaints: complaintSvc, Polls: pollSvc, Notify: noteSvc, gates: gateSvc}
+	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notices: noticeSvc, Complaints: complaintSvc, Polls: pollSvc, Amenities: amenitySvc, Attendance: attendSvc, Notify: noteSvc, gates: gateSvc}
 }

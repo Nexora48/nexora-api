@@ -2,8 +2,6 @@ package visitor
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,6 +17,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/audit"
 	"github.com/Nexora48/nexora-api/internal/blob"
 	"github.com/Nexora48/nexora-api/internal/household"
+	"github.com/Nexora48/nexora-api/internal/pass"
 	"github.com/Nexora48/nexora-api/internal/platform/authctx"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
 	"github.com/Nexora48/nexora-api/internal/platform/httpx"
@@ -66,7 +65,7 @@ type Service struct {
 	pool       *pgxpool.Pool
 	rdb        *redis.Client
 	audit      *audit.Logger
-	qrKey      []byte
+	qr         *pass.Signer
 	maxWindow  time.Duration
 	walkinWait time.Duration
 	ev         Events
@@ -113,9 +112,7 @@ func NewService(pool *pgxpool.Pool, rdb *redis.Client, a *audit.Logger, secret s
 	if walkinWait <= 0 {
 		walkinWait = 10 * time.Minute
 	}
-	k := hmac.New(sha256.New, []byte(secret))
-	k.Write([]byte("visitor-qr"))
-	return &Service{pool: pool, rdb: rdb, audit: a, qrKey: k.Sum(nil), maxWindow: maxWindow, walkinWait: walkinWait}
+	return &Service{pool: pool, rdb: rdb, audit: a, qr: pass.NewSigner(secret, "visitor-qr", qrPrefix), maxWindow: maxWindow, walkinWait: walkinWait}
 }
 
 // eff is the SQL for the effective status: stale invites/requests read as expired right away.

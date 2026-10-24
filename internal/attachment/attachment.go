@@ -23,6 +23,9 @@ const (
 	OwnerNotice         = "notice"
 	OwnerComplaint      = "complaint"
 	OwnerComplaintEvent = "complaint_event"
+	OwnerAmenity        = "amenity"
+	OwnerHelper         = "helper"
+	OwnerStaff          = "staff"
 )
 
 var (

@@ -4,6 +4,9 @@ package gate
 import (
 	"context"
 	"errors"
+	"github.com/Nexora48/nexora-api/internal/attendance"
+	"github.com/Nexora48/nexora-api/internal/feature"
+	"github.com/Nexora48/nexora-api/internal/platform/authctx"
 	"net/http"
 	"strings"
 	"time"
@@ -33,10 +36,33 @@ type Service struct {
 	pool  *pgxpool.Pool
 	audit *audit.Logger
 	hub   *realtime.Hub
+	att   *attendance.Service
+	feats *feature.Service
 }
 
 func NewService(pool *pgxpool.Pool, a *audit.Logger, hub *realtime.Hub) *Service {
 	return &Service{pool: pool, audit: a, hub: hub}
+}
+
+// SetAttendance lets the offline batch and the pass sync carry daily-help and staff attendance.
+func (s *Service) SetAttendance(att *attendance.Service, feats *feature.Service) {
+	s.att, s.feats = att, feats
+}
+
+func (s *Service) attendanceOn(ctx context.Context, soc uuid.UUID) bool {
+	if s.att == nil || s.feats == nil {
+		return false
+	}
+	on, err := s.feats.Enabled(ctx, soc, "staff_attendance")
+	return err == nil && on
+}
+
+// AttendanceSync is the offline list of helpers and staff (empty when the service is switched off for the society).
+func (s *Service) AttendanceSync(ctx context.Context, p authctx.Principal) ([]attendance.SyncEntry, error) {
+	if !s.attendanceOn(ctx, p.SocietyID) {
+		return []attendance.SyncEntry{}, nil
+	}
+	return s.att.Sync(ctx, p)
 }
 
 func (s *Service) log(ctx context.Context, soc, actor uuid.UUID, action, entity string, id uuid.UUID, meta map[string]any) {

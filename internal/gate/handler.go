@@ -267,7 +267,12 @@ func (h *Handler) PassesSync(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"passes": v, "society_id": principal(r).SocietyID}, nil)
+	att, err := h.svc.AttendanceSync(r.Context(), principal(r))
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, map[string]any{"passes": v, "attendance": att, "society_id": principal(r).SocietyID}, nil)
 }
 
 func (h *Handler) Batch(w http.ResponseWriter, r *http.Request) {

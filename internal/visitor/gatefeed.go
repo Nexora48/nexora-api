@@ -2,15 +2,13 @@ package visitor
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/Nexora48/nexora-api/internal/household"
+	"github.com/Nexora48/nexora-api/internal/pass"
 	"github.com/Nexora48/nexora-api/internal/platform/authctx"
 )
 
@@ -81,11 +79,8 @@ type SyncPass struct {
 	ExpectedUntil time.Time `json:"expected_until"`
 }
 
-// CodeHash is the offline lookup key: sha256("<society id>:<6-digit code>").
-func CodeHash(societyID uuid.UUID, code string) string {
-	h := sha256.Sum256([]byte(societyID.String() + ":" + strings.TrimSpace(code)))
-	return hex.EncodeToString(h[:])
-}
+// CodeHash is the offline lookup key: sha256("<society id>:<code>").
+func CodeHash(societyID uuid.UUID, code string) string { return pass.CodeHash(societyID, code) }
 
 func (s *Service) PassesSync(ctx context.Context, p authctx.Principal) ([]SyncPass, error) {
 	rows, err := s.pool.Query(ctx, `
