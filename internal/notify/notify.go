@@ -5,16 +5,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Message is deliberately small: payloads never carry visitor details, the app fetches them after opening.
 type Message struct {
-	Title string
-	Body  string
-	Data  map[string]string
+	Title   string
+	Body    string
+	Data    map[string]string
+	Channel string // Android channel id; critical alerts use a loud one
 }
 
 // ErrUnregistered means the token is dead and must be dropped.
@@ -39,44 +37,4 @@ func suffix(t string) string {
 		return t
 	}
 	return t[len(t)-6:]
-}
-
-type Service struct {
-	pool   *pgxpool.Pool
-	sender Sender
-	log    *slog.Logger
-}
-
-func NewService(pool *pgxpool.Pool, sender Sender, log *slog.Logger) *Service {
-	if sender == nil {
-		sender = LogSender{Log: log}
-	}
-	return &Service{pool: pool, sender: sender, log: log}
-}
-
-// ToUsers pushes to every registered device of the given users and drops dead tokens.
-func (s *Service) ToUsers(ctx context.Context, userIDs []uuid.UUID, m Message) {
-	if len(userIDs) == 0 {
-		return
-	}
-	rows, err := s.pool.Query(ctx, `SELECT fcm_token FROM devices WHERE user_id = ANY($1) AND fcm_token IS NOT NULL AND fcm_token <> ''`, userIDs)
-	if err != nil {
-		return
-	}
-	var tokens []string
-	for rows.Next() {
-		var t string
-		if rows.Scan(&t) == nil {
-			tokens = append(tokens, t)
-		}
-	}
-	rows.Close()
-	for _, t := range tokens {
-		err := s.sender.Send(ctx, t, m)
-		if errors.Is(err, ErrUnregistered) {
-			_, _ = s.pool.Exec(ctx, `UPDATE devices SET fcm_token=NULL WHERE fcm_token=$1`, t)
-		} else if err != nil && s.log != nil {
-			s.log.Warn("push failed", "err", err)
-		}
-	}
 }

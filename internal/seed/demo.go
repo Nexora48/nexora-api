@@ -3,6 +3,7 @@ package seed
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -93,6 +94,9 @@ func Demo(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := demoGuard(ctx, pool); err != nil {
 		return err
 	}
+	if err := demoM6(ctx, pool); err != nil {
+		return err
+	}
 	return demoVisits(ctx, pool)
 }
 
@@ -158,6 +162,39 @@ func demoGuard(ctx context.Context, pool *pgxpool.Pool) error {
 		   AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id=u.id AND m.society_id=$1)`,
 	} {
 		if _, err := pool.Exec(ctx, q, SocietyID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// demoM6 adds emergency contacts, a delivery rule for A101, a resolved SOS and a few notifications.
+func demoM6(ctx context.Context, pool *pgxpool.Pool) error {
+	for _, q := range []string{
+		`INSERT INTO society_contacts (society_id, label, phone, hours, sort_order)
+		   SELECT $1, v.l, v.p, v.h, v.o FROM (VALUES ('Security Control Room','02212345678','24/7',0), ('Society Manager','02287654321','9AM-6PM',1), ('Ambulance (Sunrise Clinic)','02255501234','24/7',2)) AS v(l,p,h,o)
+		   WHERE NOT EXISTS (SELECT 1 FROM society_contacts WHERE society_id=$1)`,
+		`INSERT INTO delivery_rules (society_id, unit_id, scope, mode, companies, updated_by)
+		   SELECT $1, u.id, 'delivery', 'auto_approve', ARRAY['Swiggy','Zomato'], $2 FROM units u WHERE u.society_id=$1 AND u.number='A101'
+		   ON CONFLICT (unit_id, scope) DO NOTHING`,
+		`INSERT INTO sos_events (society_id, unit_id, raised_by_membership_id, kind, note, status, raised_at, last_alert_at, acknowledged_at, resolved_at, resolution_note)
+		   SELECT $1, u.id, $2, 'medical', 'Demo: resolved alert', 'resolved', now() - interval '2 days', now() - interval '2 days', now() - interval '2 days' + interval '1 minute', now() - interval '2 days' + interval '9 minutes', 'Demo outcome: ambulance called'
+		   FROM units u WHERE u.society_id=$1 AND u.number='A101' AND NOT EXISTS (SELECT 1 FROM sos_events WHERE society_id=$1)`,
+		`INSERT INTO notifications (society_id, user_id, type, title, body, data, priority, read_at, created_at)
+		   SELECT $1, $2, v.t, v.ti, v.b, '{}'::jsonb, 'normal', v.r, now() - v.age FROM (VALUES
+		     ('visit.arrived','Arrival at the gate','A delivery was let in by your rule.', NULL::timestamptz, interval '3 hours'),
+		     ('visit.request','Visitor at the gate','Someone is waiting to enter. Tap to respond.', now(), interval '1 day'),
+		     ('system','Welcome to Nexora Living','Your society is set up. Pre-approve visitors and manage deliveries from the app.', now(), interval '5 days')) AS v(t,ti,b,r,age)
+		   WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE user_id=$2)`,
+	} {
+		args := []any{SocietyID}
+		switch {
+		case strings.Contains(q, "delivery_rules"), strings.Contains(q, "sos_events"):
+			args = append(args, ResidentMem)
+		case strings.Contains(q, "INTO notifications"):
+			args = append(args, ResidentID)
+		}
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
 			return err
 		}
 	}

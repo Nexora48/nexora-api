@@ -36,6 +36,11 @@ type Config struct {
 	FCMProjectID       string
 	FCMCredentialsFile string
 	BlobPath           string // local-disk photo store; empty disables walk-in photos
+
+	// SOS and notifications (M6)
+	SOSEscalateAfter time.Duration
+	SOSCancelWindow  time.Duration
+	NotifyRetention  time.Duration
 }
 
 // IsDev enables dev-only behaviour (fixed OTP, console SMS, seed data).
@@ -62,6 +67,16 @@ func Load() (Config, error) {
 	}
 	if v, err := strconv.Atoi(os.Getenv("VISITOR_WALKIN_TIMEOUT_MIN")); err == nil && v > 0 {
 		cfg.VisitorWalkinWait = time.Duration(v) * time.Minute
+	}
+	cfg.SOSEscalateAfter, cfg.SOSCancelWindow, cfg.NotifyRetention = 60*time.Second, 2*time.Minute, 90*24*time.Hour
+	if v, err := strconv.Atoi(os.Getenv("SOS_ESCALATE_AFTER_SEC")); err == nil && v > 0 {
+		cfg.SOSEscalateAfter = time.Duration(v) * time.Second
+	}
+	if v, err := strconv.Atoi(os.Getenv("SOS_CANCEL_WINDOW_SEC")); err == nil && v > 0 {
+		cfg.SOSCancelWindow = time.Duration(v) * time.Second
+	}
+	if v, err := strconv.Atoi(os.Getenv("NOTIFY_RETENTION_DAYS")); err == nil && v > 0 {
+		cfg.NotifyRetention = time.Duration(v) * 24 * time.Hour
 	}
 	cfg.FCMProjectID = os.Getenv("FCM_PROJECT_ID")
 	cfg.FCMCredentialsFile = os.Getenv("FCM_CREDENTIALS_FILE")

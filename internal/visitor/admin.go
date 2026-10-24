@@ -95,15 +95,25 @@ func (s *Service) AdminExport(ctx context.Context, p authctx.Principal, f ListFi
 		return 0, err
 	}
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"Visitor", "Phone", "Purpose", "Company", "Vehicle", "People", "Flat", "Resident", "Status", "Source", "Expected from", "Expected until", "Entered", "Exited", "Created"})
+	_ = cw.Write([]string{"Visitor", "Phone", "Purpose", "Company", "Vehicle", "People", "Flat", "Resident", "Status", "Source", "Auto-approved", "Expected from", "Expected until", "Entered", "Exited", "Created"})
 	for _, v := range rows {
 		_ = cw.Write([]string{
 			csvSafe(v.VisitorName), csvSafe(deref(v.VisitorPhone)), v.Purpose, csvSafe(deref(v.Company)), csvSafe(deref(v.VehicleNumber)),
-			fmt.Sprint(v.VisitorCount), v.UnitNumber, csvSafe(deref(v.HostName)), v.Status, v.Source,
+			fmt.Sprint(v.VisitorCount), v.UnitNumber, csvSafe(deref(v.HostName)), v.Status, v.Source, autoLabel(v),
 			ts(&v.ExpectedFrom), ts(&v.ExpectedUntil), ts(v.EnteredAt), ts(v.ExitedAt), ts(&v.CreatedAt),
 		})
 	}
 	cw.Flush()
 	s.logv(ctx, p, "visit.export", uuid.Nil, map[string]any{"rows": len(rows)})
 	return len(rows), cw.Error()
+}
+
+func autoLabel(v Visit) string {
+	switch {
+	case v.Handover != nil:
+		return "yes (" + *v.Handover + ")"
+	case v.DecidedByRule:
+		return "yes"
+	}
+	return "no"
 }

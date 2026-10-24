@@ -49,6 +49,8 @@ type Visit struct {
 	HasPhoto       bool       `json:"has_photo"`
 	AwaitingPhoto  bool       `json:"awaiting_photo,omitempty"`
 	Rerings        int        `json:"rerings,omitempty"`
+	DecidedByRule  bool       `json:"auto_approved,omitempty"`
+	Handover       *string    `json:"handover,omitempty"`
 }
 
 // GateVisit is what a guard may see: no phone number, no private note.
@@ -75,13 +77,16 @@ type GateVisit struct {
 	HasPhoto      bool       `json:"has_photo"`
 	AwaitingPhoto bool       `json:"awaiting_photo,omitempty"`
 	Rerings       int        `json:"rerings,omitempty"`
+	AutoApproved  bool       `json:"auto_approved,omitempty"`
+	Handover      *string    `json:"handover,omitempty"`
 }
 
 func (v Visit) ForGate() GateVisit {
 	return GateVisit{ID: v.ID, VisitorName: v.VisitorName, Purpose: v.Purpose, Company: v.Company, VehicleNumber: v.VehicleNumber,
 		VisitorCount: v.VisitorCount, UnitID: v.UnitID, UnitNumber: v.UnitNumber, BlockCode: v.BlockCode, HostName: v.HostName,
 		Source: v.Source, Status: v.Status, ExpectedFrom: v.ExpectedFrom, ExpectedUntil: v.ExpectedUntil, EnteredAt: v.EnteredAt, CreatedAt: v.CreatedAt,
-		DecidedAt: v.DecidedAt, Reason: v.DecisionReason, GateName: v.GateName, HasPhoto: v.HasPhoto, AwaitingPhoto: v.AwaitingPhoto, Rerings: v.Rerings}
+		DecidedAt: v.DecidedAt, Reason: v.DecisionReason, GateName: v.GateName, HasPhoto: v.HasPhoto, AwaitingPhoto: v.AwaitingPhoto, Rerings: v.Rerings,
+		AutoApproved: v.DecidedByRule, Handover: v.Handover}
 }
 
 type VerifyResult struct {

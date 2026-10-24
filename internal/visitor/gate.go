@@ -131,21 +131,50 @@ func (s *Service) WalkIn(ctx context.Context, p authctx.Principal, in WalkInInpu
 	var needPhoto bool
 	_ = s.pool.QueryRow(ctx, `SELECT walkin_photo_required FROM societies WHERE id=$1`, p.SocietyID).Scan(&needPhoto)
 	needPhoto = needPhoto && s.blobs != nil
+
+	// the flat's own delivery/cab rule may let the visitor in without asking
+	var dec RuleDecision
+	if s.rules != nil && (in.Purpose == "delivery" || in.Purpose == "cab") {
+		if d, err := s.rules.Resolve(ctx, p.SocietyID, in.UnitID, in.Purpose, cleanText(in.Company)); err == nil {
+			dec = d
+		}
+	}
+	auto := dec.Mode == "auto_approve" || dec.Mode == "leave_at_gate"
+	var handover *string
+	if dec.Mode == "leave_at_gate" {
+		h := "leave_at_gate"
+		handover = &h
+	}
+	if auto {
+		needPhoto = false // nobody is waiting on it; the photo can still be added
+	}
+	status := StatusWaiting
+	if auto {
+		status = StatusApproved
+	}
 	var id uuid.UUID
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO visits (society_id, unit_id, created_by_membership_id, visitor_name, visitor_phone, purpose, company, vehicle_number,
-		                    visitor_count, source, status, expected_from, expected_until, awaiting_photo, gate_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'walk_in','waiting',$10,$11,$12,
-		        (SELECT gate_id FROM guard_shifts WHERE membership_id=$3 AND ended_at IS NULL)) RETURNING id`,
+		                    visitor_count, source, status, expected_from, expected_until, awaiting_photo, gate_id, decided_by_rule, handover, decided_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'walk_in',$12,$10,$11,$13,
+		        (SELECT gate_id FROM guard_shifts WHERE membership_id=$3 AND ended_at IS NULL), $14, $15, CASE WHEN $14 THEN now() END) RETURNING id`,
 		p.SocietyID, in.UnitID, p.MembershipID, strings.TrimSpace(in.VisitorName), phone, in.Purpose, cleanText(in.Company), vehicle, count,
-		now, now.Add(walkInWindow), needPhoto).Scan(&id)
+		now, now.Add(walkInWindow), status, needPhoto, auto, handover).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-	s.logv(ctx, p, "visit.walk_in", id, map[string]any{"unit_id": in.UnitID.String(), "purpose": in.Purpose})
+	if dec.ExpectationID != nil {
+		_ = s.rules.Consume(ctx, *dec.ExpectationID)
+	}
+	s.logv(ctx, p, "visit.walk_in", id, map[string]any{"unit_id": in.UnitID.String(), "purpose": in.Purpose, "auto": dec.Mode})
 	v, err := s.one(ctx, p.SocietyID, id, nil)
-	if err == nil && !needPhoto { // with a required photo the resident is asked once the photo is in
-		s.emit(ctx, "visit.requested", v)
+	if err == nil {
+		switch {
+		case auto:
+			s.emit(ctx, "visit.arrived", v)
+		case !needPhoto: // with a required photo the resident is asked once the photo is in
+			s.emit(ctx, "visit.requested", v)
+		}
 	}
 	return v, err
 }

@@ -17,6 +17,8 @@ import (
 	"github.com/Nexora48/nexora-api/internal/auth"
 	"github.com/Nexora48/nexora-api/internal/blob"
 	"github.com/Nexora48/nexora-api/internal/config"
+	"github.com/Nexora48/nexora-api/internal/contacts"
+	"github.com/Nexora48/nexora-api/internal/delivery"
 	"github.com/Nexora48/nexora-api/internal/feature"
 	"github.com/Nexora48/nexora-api/internal/gate"
 	"github.com/Nexora48/nexora-api/internal/health"
@@ -29,6 +31,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/realtime"
 	"github.com/Nexora48/nexora-api/internal/resident"
 	"github.com/Nexora48/nexora-api/internal/society"
+	"github.com/Nexora48/nexora-api/internal/sos"
 	"github.com/Nexora48/nexora-api/internal/superadmin"
 	"github.com/Nexora48/nexora-api/internal/user"
 	"github.com/Nexora48/nexora-api/internal/visitor"
@@ -53,6 +56,8 @@ type App struct {
 	// Visitors is exposed so the process can run its expiry sweeper.
 	Visitors *visitor.Service
 	Hub      *realtime.Hub
+	Sos      *sos.Service
+	Notify   *notify.Service
 	gates    *gate.Service
 }
 
@@ -61,6 +66,8 @@ func (a *App) Start(ctx context.Context) {
 	go a.Visitors.RunSweeper(ctx, time.Minute)
 	go a.gates.RunSweeper(ctx, 10*time.Minute)
 	go a.Hub.Run(ctx)
+	go a.Notify.RunWorker(ctx, time.Minute)
+	go a.Sos.RunSweeper(ctx, 15*time.Second)
 }
 
 func New(d Deps) *App {
@@ -90,8 +97,21 @@ func New(d Deps) *App {
 			d.Log.Error("fcm disabled", "err", err)
 		}
 	}
-	dispatcher := live.NewDispatcher(hub, notify.NewService(d.Pool, sender, d.Log), d.Pool, d.Cfg.VisitorWalkinWait)
+	noteSvc := notify.NewService(d.Pool, sender, d.Log)
+	noteSvc.SetPublisher(hub)
+	if d.Cfg.NotifyRetention > 0 {
+		noteSvc.SetRetention(d.Cfg.NotifyRetention)
+	}
+	dispatcher := live.NewDispatcher(hub, noteSvc, d.Pool, d.Cfg.VisitorWalkinWait)
 	visitorSvc.SetEvents(dispatcher)
+	deliverySvc := delivery.NewService(d.Pool, aud, feats)
+	visitorSvc.SetRules(deliverySvc)
+	deliveryH := delivery.NewHandler(deliverySvc)
+	noteH := notify.NewHandler(noteSvc)
+	sosSvc := sos.NewService(d.Pool, aud, noteSvc, hub, d.Cfg.SOSEscalateAfter, d.Cfg.SOSCancelWindow)
+	sosH := sos.NewHandler(sosSvc)
+	contactsSvc := contacts.NewService(d.Pool, aud)
+	contactsH := contacts.NewHandler(contactsSvc)
 	if d.Cfg.BlobPath != "" {
 		if store, err := blob.NewDisk(d.Cfg.BlobPath); err == nil {
 			visitorSvc.SetBlobs(store)
@@ -164,6 +184,16 @@ func New(d Deps) *App {
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePasswordChanged)
 				r.Put("/devices", meH.RegisterDevice)
+				r.Get("/notifications", noteH.List)
+				r.Get("/notifications/unread-count", noteH.UnreadCount)
+				r.Post("/notifications/read-all", noteH.ReadAll)
+				r.Post("/notifications/{id}/read", noteH.Read)
+				r.Get("/notification-prefs", noteH.Prefs)
+				r.Put("/notification-prefs", noteH.SetPref)
+				r.Get("/contacts", contactsH.List)
+				r.With(middleware.RequireFeature(feats, "deliveries"), need("visitor.approve")).Get("/delivery-rules", deliveryH.Rules)
+				r.With(middleware.RequireFeature(feats, "deliveries"), need("visitor.approve")).Put("/delivery-rules", deliveryH.SetRule)
+				r.With(middleware.RequireFeature(feats, "sos"), need("sos.trigger")).Get("/sos", sosH.Mine)
 				r.Delete("/devices/{id}", meH.UnregisterDevice)
 				r.With(need("profile.manage")).Put("/profile", householdH.UpdateProfile)
 				r.With(need("profile.manage")).Get("/emergency-contact", householdH.GetEmergency)
@@ -192,6 +222,8 @@ func New(d Deps) *App {
 			r.With(need("visitor.read")).Get("/", visitorH.List)
 			r.With(need("visitor.read")).Get("/summary", visitorH.Summary)
 			r.With(need("visitor.read")).Get("/{id}", visitorH.Get)
+			r.With(middleware.RequireFeature(feats, "deliveries"), need("visitor.create")).Post("/expect-delivery", deliveryH.Expect)
+			r.With(middleware.RequireFeature(feats, "deliveries"), need("visitor.create")).Delete("/expect-delivery/{id}", deliveryH.CancelExpectation)
 			r.Get("/{id}/photo", visitorH.Photo) // residents of the flat, guards and admins; the service decides
 			r.With(need("visitor.create")).Post("/", visitorH.Create)
 			r.With(need("visitor.create")).Post("/{id}/cancel", visitorH.Cancel)
@@ -218,6 +250,16 @@ func New(d Deps) *App {
 			r.Post("/visits/{id}/check-out", visitorH.CheckOut)
 		})
 
+		// SOS (feature `sos`)
+		r.Route("/sos", func(r chi.Router) {
+			r.Use(protect("", "sos")...)
+			r.With(need("sos.trigger")).Post("/", sosH.Raise)
+			r.With(need("sos.trigger")).Post("/{id}/cancel", sosH.Cancel())
+			r.With(need("sos.respond")).Get("/active", sosH.Active)
+			r.With(need("sos.respond")).Post("/{id}/acknowledge", sosH.Acknowledge())
+			r.With(need("sos.respond")).Post("/{id}/resolve", sosH.Resolve)
+		})
+
 		// Shift handling stays available when the Visitors service is off, so the app can show why.
 		r.Route("/gate/shift", func(r chi.Router) {
 			r.Use(protect("gate.shift", "")...)
@@ -228,6 +270,19 @@ func New(d Deps) *App {
 		})
 
 		r.Route("/society", func(r chi.Router) {
+			r.Group(func(r chi.Router) { // SOS log (the service limits it to the office roles)
+				r.Use(protect("sos.respond", "sos")...)
+				r.Get("/sos", sosH.AdminList)
+				r.Get("/sos/export", sosH.AdminExport)
+				r.Get("/sos/{id}", sosH.AdminGet())
+			})
+			r.Group(func(r chi.Router) { // emergency contacts
+				r.Use(protect("society.manage", "")...)
+				r.Get("/contacts", contactsH.List)
+				r.Post("/contacts", contactsH.Create)
+				r.Put("/contacts/{id}", contactsH.Update)
+				r.Delete("/contacts/{id}", contactsH.Delete)
+			})
 			r.Group(func(r chi.Router) { // guards and gates
 				r.Use(protect("guard.manage", "")...)
 				r.Get("/guards", gateH.ListGuards)
@@ -278,5 +333,5 @@ func New(d Deps) *App {
 			})
 		})
 	})
-	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, gates: gateSvc}
+	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notify: noteSvc, gates: gateSvc}
 }

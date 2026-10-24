@@ -1,5 +1,5 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 0.6.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch). Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 0.7.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: "http://localhost:8080" }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
@@ -223,6 +223,50 @@ paths:
     patch: { summary: "Admin: set walkin_photo_required (guard.manage)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/society/gates/{id}:
     patch: { summary: "Admin: rename / switch off a gate", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/me/notifications:
+    get: { summary: "Inbox (unread=1, page). Stored per person; kept 90 days", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/me/notifications/unread-count:
+    get: { summary: "Unread badge count", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/me/notifications/read-all:
+    post: { summary: "Mark everything read", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/me/notifications/{id}/read:
+    post: { summary: "Mark one read (own notifications only)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Read }, "404": { description: NOT_FOUND } } }
+  /api/v1/me/notification-prefs:
+    get: { summary: "Preferences per group; the sos group is locked (critical)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: "Set {group: visits|system, push, email}. 400 LOCKED for sos", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/me/contacts:
+    get: { summary: "Society emergency contacts (any member)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/me/delivery-rules:
+    get: { summary: "My flat's delivery/cab rules and open expectations. Feature: deliveries", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: "Set {scope: delivery|cab, mode: ask|auto_approve|leave_at_gate, companies[]}. Needs visitor.approve", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/me/sos:
+    get: { summary: "My alert history. Feature: sos", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/visitors/expect-delivery:
+    post: { summary: "Let the next delivery from {company} in without asking (hours 1-24, used once). Feature: deliveries", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/visitors/expect-delivery/{id}:
+    delete: { summary: "Withdraw an expectation", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Removed } } }
+  /api/v1/sos:
+    post: { summary: "Raise an alert {kind: medical|fire|security|other, note?, test?}. Joins an open alert of the flat (200, merged). 429 SOS_RATE_LIMIT (3/hour). Feature: sos", security: [{ bearer: [] }], responses: { "201": { description: Created }, "200": { description: Joined an open alert } } }
+  /api/v1/sos/active:
+    get: { summary: "Responders: open alerts with the callback phone (guards never see test alerts)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/sos/{id}/cancel:
+    post: { summary: "Raiser: cancel within 2 minutes (false alarm). 409 CANCEL_WINDOW_OVER", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/sos/{id}/acknowledge:
+    post: { summary: "Responder: first acknowledgement wins. 409 ALREADY_ACKNOWLEDGED", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/sos/{id}/resolve:
+    post: { summary: "Responder: close with {outcome?}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/sos:
+    get: { summary: "Office: alert log (status, kind, from, to, page)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/sos/export:
+    get: { summary: "Office: CSV of the log (formula-safe, max 10,000 rows)", security: [{ bearer: [] }], responses: { "200": { description: text/csv } } }
+  /api/v1/society/sos/{id}:
+    get: { summary: "Office: one alert with its timeline", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/contacts:
+    get: { summary: "Admin: emergency contacts", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Admin: add {label, phone, hours?}. Needs society.manage", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/contacts/{id}:
+    put: { summary: "Admin: edit a contact", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    delete: { summary: "Admin: remove a contact", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Removed } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:

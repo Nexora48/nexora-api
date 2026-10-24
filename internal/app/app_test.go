@@ -22,9 +22,11 @@ import (
 	"github.com/Nexora48/nexora-api/internal/app"
 	"github.com/Nexora48/nexora-api/internal/config"
 	"github.com/Nexora48/nexora-api/internal/notification/sms"
+	"github.com/Nexora48/nexora-api/internal/notify"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
 	"github.com/Nexora48/nexora-api/internal/realtime"
 	"github.com/Nexora48/nexora-api/internal/seed"
+	"github.com/Nexora48/nexora-api/internal/sos"
 	"github.com/Nexora48/nexora-api/internal/superadmin"
 	"github.com/Nexora48/nexora-api/internal/testutil"
 	"github.com/Nexora48/nexora-api/internal/visitor"
@@ -38,6 +40,8 @@ var (
 	saCipher *superadmin.Cipher
 	vsvc     *visitor.Service
 	ahub     *realtime.Hub
+	asos     *sos.Service
+	anote    *notify.Service
 	pushRec  *pushRecorder
 )
 
@@ -79,6 +83,8 @@ func TestMain(m *testing.M) {
 	a := app.New(app.Deps{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Pool: pool, Redis: rdb, SMS: &sms.Recorder{}, Push: pushRec})
 	vsvc = a.Visitors
 	ahub = a.Hub
+	asos = a.Sos
+	anote = a.Notify
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)
 	a.Router.With(a.Protect("", "visitors")...).Get("/t/feature", ok)

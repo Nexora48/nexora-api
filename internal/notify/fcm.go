@@ -114,11 +114,15 @@ func (f *FCM) Send(ctx context.Context, token string, m Message) error {
 	if err != nil {
 		return err
 	}
+	channel := m.Channel
+	if channel == "" {
+		channel = "visitor_requests"
+	}
 	body, _ := json.Marshal(map[string]any{"message": map[string]any{
 		"token":        token,
 		"notification": map[string]string{"title": m.Title, "body": m.Body},
 		"data":         m.Data,
-		"android":      map[string]any{"priority": "HIGH", "notification": map[string]string{"channel_id": "visitor_requests"}},
+		"android":      map[string]any{"priority": "HIGH", "notification": map[string]string{"channel_id": channel}},
 	}})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, f.sendURL, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+at)

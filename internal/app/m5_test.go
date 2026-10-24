@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -22,8 +23,9 @@ import (
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 type pushRecorder struct {
-	mu   sync.Mutex
-	sent []pushed
+	mu      sync.Mutex
+	sent    []pushed
+	failing bool // simulate a provider outage for tokens starting with "flaky-"
 }
 type pushed struct {
 	Token string
@@ -34,6 +36,9 @@ func (p *pushRecorder) Send(_ context.Context, token string, m notify.Message) e
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sent = append(p.sent, pushed{token, m})
+	if p.failing && strings.HasPrefix(token, "flaky-") {
+		return errors.New("provider down")
+	}
 	if strings.HasPrefix(token, "dead-") {
 		return notify.ErrUnregistered
 	}
@@ -53,9 +58,10 @@ func (p *pushRecorder) to(token string) []pushed {
 
 // wsClient is a connected app: it collects events until closed.
 type wsClient struct {
-	conn *websocket.Conn
-	ch   chan map[string]any
-	done chan struct{}
+	conn  *websocket.Conn
+	ch    chan map[string]any // events
+	notes chan map[string]any // notification.new, kept apart so event assertions stay simple
+	done  chan struct{}
 }
 
 func dialWS(t *testing.T, token string) *wsClient {
@@ -65,7 +71,7 @@ func dialWS(t *testing.T, token string) *wsClient {
 	if err != nil {
 		t.Fatalf("ws dial: %v", err)
 	}
-	w := &wsClient{conn: c, ch: make(chan map[string]any, 64), done: make(chan struct{})}
+	w := &wsClient{conn: c, ch: make(chan map[string]any, 64), notes: make(chan map[string]any, 64), done: make(chan struct{})}
 	go func() {
 		defer close(w.done)
 		for {
@@ -74,7 +80,12 @@ func dialWS(t *testing.T, token string) *wsClient {
 				return
 			}
 			var m map[string]any
-			if json.Unmarshal(b, &m) == nil && m["type"] != "hello" {
+			if json.Unmarshal(b, &m) != nil || m["type"] == "hello" {
+				continue
+			}
+			if m["type"] == "notification.new" {
+				w.notes <- m
+			} else {
 				w.ch <- m
 			}
 		}
@@ -103,6 +114,17 @@ func (w *wsClient) expect(t *testing.T, typ string) map[string]any {
 	}
 	d, _ := m["data"].(map[string]any)
 	return d
+}
+
+// note returns the next stored-notification event (its data) or nil.
+func (w *wsClient) note(d time.Duration) map[string]any {
+	select {
+	case m := <-w.notes:
+		x, _ := m["data"].(map[string]any)
+		return x
+	case <-time.After(d):
+		return nil
+	}
 }
 
 func (w *wsClient) expectNothing(t *testing.T) {

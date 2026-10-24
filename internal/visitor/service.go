@@ -70,6 +70,7 @@ type Service struct {
 	maxWindow  time.Duration
 	walkinWait time.Duration
 	ev         Events
+	rules      RuleResolver
 	blobs      blob.Store
 }
 
@@ -80,6 +81,21 @@ type Events interface {
 
 // SetEvents wires the realtime/push dispatcher; nil keeps visit changes silent.
 func (s *Service) SetEvents(e Events) { s.ev = e }
+
+// RuleResolver tells the gate how a flat wants deliveries and cabs handled.
+type RuleResolver interface {
+	Resolve(ctx context.Context, society, unit uuid.UUID, purpose string, company *string) (RuleDecision, error)
+	Consume(ctx context.Context, expectationID uuid.UUID) error
+}
+
+// RuleDecision: Mode is "" (ask the resident), "auto_approve" or "leave_at_gate".
+type RuleDecision struct {
+	Mode          string
+	ExpectationID *uuid.UUID
+}
+
+// SetRules enables per-flat delivery and cab rules.
+func (s *Service) SetRules(r RuleResolver) { s.rules = r }
 
 // SetBlobs enables walk-in photos.
 func (s *Service) SetBlobs(b blob.Store) { s.blobs = b }
@@ -118,7 +134,7 @@ func (s *Service) selectCols() string {
 		    ORDER BY (mm.role_key='resident_tenant') DESC LIMIT 1)),
 		v.visitor_name, v.visitor_phone, v.purpose, v.company, v.vehicle_number, v.visitor_count, v.note, v.source,
 		` + s.eff() + `, v.pass_code, v.expected_from, v.expected_until, v.entered_at, v.exited_at, v.decided_at, v.decision_reason, v.created_at,
-		g.name, (v.photo_key IS NOT NULL), v.awaiting_photo, v.rerings::int`
+		g.name, (v.photo_key IS NOT NULL), v.awaiting_photo, v.rerings::int, v.decided_by_rule, v.handover`
 }
 
 const fromJoin = ` FROM visits v JOIN units un ON un.id=v.unit_id JOIN blocks b ON b.id=un.block_id
@@ -128,7 +144,7 @@ func (s *Service) scan(row pgx.Row, extra ...any) (*Visit, error) {
 	var v Visit
 	dest := []any{&v.ID, &v.UnitID, &v.UnitNumber, &v.BlockCode, &v.HostName, &v.VisitorName, &v.VisitorPhone, &v.Purpose, &v.Company,
 		&v.VehicleNumber, &v.VisitorCount, &v.Note, &v.Source, &v.Status, &v.PassCode, &v.ExpectedFrom, &v.ExpectedUntil, &v.EnteredAt,
-		&v.ExitedAt, &v.DecidedAt, &v.DecisionReason, &v.CreatedAt, &v.GateName, &v.HasPhoto, &v.AwaitingPhoto, &v.Rerings}
+		&v.ExitedAt, &v.DecidedAt, &v.DecisionReason, &v.CreatedAt, &v.GateName, &v.HasPhoto, &v.AwaitingPhoto, &v.Rerings, &v.DecidedByRule, &v.Handover}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

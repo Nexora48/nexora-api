@@ -5,6 +5,7 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ type Event struct {
 	SocietyID uuid.UUID  `json:"society_id"`
 	Unit      *uuid.UUID `json:"unit_id,omitempty"` // residents living in this flat
 	Guards    bool       `json:"guards,omitempty"`  // every guard of the society
+	Roles     []string   `json:"roles,omitempty"`   // everyone holding one of these roles (e.g. society_admin)
 	All       bool       `json:"all,omitempty"`     // everyone in the society
 	User      *uuid.UUID `json:"user_id,omitempty"` // one person (all their devices)
 	Data      any        `json:"data,omitempty"`
@@ -66,6 +68,8 @@ func (c *Client) matches(e Event) bool {
 	case e.User != nil && *e.User == c.UserID:
 		return true
 	case e.Guards && c.Role == "guard":
+		return true
+	case len(e.Roles) > 0 && slices.Contains(e.Roles, c.Role):
 		return true
 	case e.Unit != nil && c.UnitID != nil && *e.Unit == *c.UnitID && c.Role != "guard":
 		return true
