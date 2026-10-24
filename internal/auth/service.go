@@ -215,7 +215,7 @@ func (s *Service) issueSession(ctx context.Context, u *user.User, m user.Members
 	deviceID := ""
 	if ci.Device != nil {
 		deviceID = ci.Device.DeviceID
-		_ = s.users.UpsertDevice(ctx, userID, ci.Device.DeviceID, ci.Device.Platform, ci.Device.FCMToken, ci.Device.AppVersion, "")
+		_ = s.users.UpsertDevice(ctx, userID, ci.Device.DeviceID, ci.Device.Platform, ci.Device.FCMToken, ci.Device.AppVersion, ci.Device.App)
 	}
 	if err := s.repo.CreateRefresh(ctx, userID, m.ID, family, hash, time.Now().Add(s.refreshTTL), deviceID, ci.IP, ci.UserAgent); err != nil {
 		return nil, err

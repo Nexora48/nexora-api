@@ -777,3 +777,29 @@ func TestPhotoRequirementSetting(t *testing.T) {
 		}
 	}
 }
+
+// The apps send {device: {device_id, platform, app, app_version}} at login; the strict decoder must accept it.
+func TestLoginAcceptsTheAppsDevicePayload(t *testing.T) {
+	s := newSoc(t)
+	_, units := setupBlock(t, s, "A", 1, 1)
+	_, phone := newResident(t, s, units["A101"], "owner")
+	mr.FlushAll()
+	if r := call(t, "POST", "/api/v1/auth/otp/request", "", map[string]any{"phone": phone}); r.Status != 204 {
+		t.Fatalf("otp: %d", r.Status)
+	}
+	dev := map[string]any{"device_id": "web-123", "platform": "android", "app": "living", "app_version": "1.0.0"}
+	r := call(t, "POST", "/api/v1/auth/otp/verify", "", map[string]any{"phone": phone, "otp": "123456", "device": dev})
+	if r.Status != 200 || r.str("access_token") == "" {
+		t.Fatalf("login with the app's device payload: %d %v", r.Status, r.Body)
+	}
+	var app string
+	if err := pool.QueryRow(context.Background(), `SELECT app FROM devices WHERE device_id='web-123' AND user_id=(SELECT id FROM users WHERE phone=$1)`, phone).Scan(&app); err != nil || app != "living" {
+		t.Fatalf("app recorded: %q %v", app, err)
+	}
+	dev["app"] = "toaster"
+	mr.FlushAll()
+	call(t, "POST", "/api/v1/auth/otp/request", "", map[string]any{"phone": phone})
+	if r := call(t, "POST", "/api/v1/auth/otp/verify", "", map[string]any{"phone": phone, "otp": "123456", "device": dev}); r.Status != 400 {
+		t.Fatalf("unknown app: %d", r.Status)
+	}
+}

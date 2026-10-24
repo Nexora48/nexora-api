@@ -7,6 +7,7 @@ type DeviceInfo struct {
 	Platform   string `json:"platform" validate:"max=20"`
 	AppVersion string `json:"app_version" validate:"max=30"`
 	FCMToken   string `json:"fcm_token" validate:"max=500"`
+	App        string `json:"app" validate:"omitempty,oneof=living get admin"`
 }
 
 type OTPRequest struct {
