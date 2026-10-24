@@ -27,6 +27,7 @@ type SheetRow struct {
 	Name        string    `json:"name"`
 	Role        string    `json:"role"`
 	WorkDays    []int     `json:"work_days,omitempty"` // staff only: lets the screen show absences
+	Since       *string   `json:"since,omitempty"`     // staff only: first day on the list (no absences before it)
 	Present     int       `json:"present_days"`
 	LateDays    int       `json:"late_days"`
 	Minutes     int       `json:"minutes"`
@@ -67,7 +68,7 @@ func (s *Service) Sheet(ctx context.Context, p authctx.Principal, month, typ str
 
 	// everyone who has a row: staff always, helpers only when they appeared this month
 	if typ == "" || typ == "staff" {
-		rows, err := s.pool.Query(ctx, `SELECT id, full_name, role, work_days FROM society_staff WHERE society_id=$1 AND (active OR EXISTS (SELECT 1 FROM attendance_logs l WHERE l.subject_id=society_staff.id AND l.in_at >= $2 AND l.in_at < $3)) ORDER BY full_name, id`, p.SocietyID, from, to)
+		rows, err := s.pool.Query(ctx, `SELECT id, full_name, role, work_days, to_char(created_at AT TIME ZONE (SELECT timezone FROM societies WHERE id=$1), 'YYYY-MM-DD') FROM society_staff WHERE society_id=$1 AND (active OR EXISTS (SELECT 1 FROM attendance_logs l WHERE l.subject_id=society_staff.id AND l.in_at >= $2 AND l.in_at < $3)) ORDER BY full_name, id`, p.SocietyID, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -75,10 +76,12 @@ func (s *Service) Sheet(ctx context.Context, p authctx.Principal, month, typ str
 		for rows.Next() {
 			r := &SheetRow{SubjectType: "staff", Days: []Day{}}
 			var wd []int16
-			if err := rows.Scan(&r.SubjectID, &r.Name, &r.Role, &wd); err != nil {
+			var since string
+			if err := rows.Scan(&r.SubjectID, &r.Name, &r.Role, &wd, &since); err != nil {
 				rows.Close()
 				return nil, err
 			}
+			r.Since = &since
 			r.WorkDays = []int{}
 			for _, d := range wd {
 				r.WorkDays = append(r.WorkDays, int(d))
