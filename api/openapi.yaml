@@ -218,6 +218,9 @@ paths:
   /api/v1/society/gates:
     get: { summary: "Admin: gates", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
     post: { summary: "Admin: add a gate {name}. 409 GATE_EXISTS", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/gate-settings:
+    get: { summary: "Admin: gate settings (walkin_photo_required)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    patch: { summary: "Admin: set walkin_photo_required (guard.manage)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/society/gates/{id}:
     patch: { summary: "Admin: rename / switch off a gate", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
 components:

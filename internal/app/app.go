@@ -237,6 +237,8 @@ func New(d Deps) *App {
 				r.Get("/gates", gateH.ListGates)
 				r.Post("/gates", gateH.CreateGate)
 				r.Patch("/gates/{id}", gateH.UpdateGate)
+				r.Get("/gate-settings", gateH.GetSettings)
+				r.Patch("/gate-settings", gateH.UpdateSettings)
 			})
 			r.Group(func(r chi.Router) { // admin visitor log
 				r.Use(protect("visitor.admin", "visitors")...)

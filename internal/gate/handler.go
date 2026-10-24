@@ -98,6 +98,34 @@ func (h *Handler) RemoveGuard(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
+type settingsPatch struct {
+	WalkinPhotoRequired *bool `json:"walkin_photo_required" validate:"required"`
+}
+
+func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	st, err := h.svc.Settings(r.Context(), principal(r).SocietyID)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, st, nil)
+}
+
+func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var req settingsPatch
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	p := principal(r)
+	st, err := h.svc.UpdateSettings(r.Context(), p.SocietyID, p.UserID, *req.WalkinPhotoRequired)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, st, nil)
+}
+
 // ── admin + guard: gates ─────────────────────────────────────────────────────
 
 type gateRequest struct {

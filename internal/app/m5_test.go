@@ -727,3 +727,31 @@ func TestPushTokenFollowsThePersonSignedIn(t *testing.T) {
 	}
 	_, _ = p1, p2
 }
+
+func TestPhotoRequirementSetting(t *testing.T) {
+	s := newSoc(t)
+	_, units := setupBlock(t, s, "A", 1, 1)
+	r1, _ := newResident(t, s, units["A101"], "owner")
+	g := newGuard(t, s)
+
+	if st := call(t, "GET", "/api/v1/society/gate-settings", s.Admin, nil); st.Status != 200 || st.data()["walkin_photo_required"] != false {
+		t.Fatalf("get: %d %v", st.Status, st.Body)
+	}
+	if w := walkIn(t, g, units["A101"], "No Photo Needed"); w.data()["awaiting_photo"] == true {
+		t.Fatalf("photo not required: %v", w.Body)
+	}
+	if r := call(t, "PATCH", "/api/v1/society/gate-settings", s.Admin, map[string]any{"walkin_photo_required": true}); r.Status != 200 || r.data()["walkin_photo_required"] != true {
+		t.Fatalf("enable: %d %v", r.Status, r.Body)
+	}
+	if w := walkIn(t, g, units["A101"], "Photo Needed"); w.data()["awaiting_photo"] != true {
+		t.Fatalf("photo required: %v", w.Body)
+	}
+	if r := call(t, "PATCH", "/api/v1/society/gate-settings", s.Admin, map[string]any{}); r.Status != 400 {
+		t.Fatalf("empty patch: %d", r.Status)
+	}
+	for name, tok := range map[string]string{"resident": r1, "guard": g.Token} {
+		if r := call(t, "PATCH", "/api/v1/society/gate-settings", tok, map[string]any{"walkin_photo_required": false}); r.Status != 403 {
+			t.Fatalf("%s changes settings: %d", name, r.Status)
+		}
+	}
+}

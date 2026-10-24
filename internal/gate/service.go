@@ -124,6 +124,26 @@ func (s *Service) UpdateGate(ctx context.Context, soc, actor, id uuid.UUID, name
 	return &g, nil
 }
 
+// ── gate settings ────────────────────────────────────────────────────────────
+
+type Settings struct {
+	WalkinPhotoRequired bool `json:"walkin_photo_required"`
+}
+
+func (s *Service) Settings(ctx context.Context, soc uuid.UUID) (*Settings, error) {
+	var st Settings
+	err := s.pool.QueryRow(ctx, `SELECT walkin_photo_required FROM societies WHERE id=$1`, soc).Scan(&st.WalkinPhotoRequired)
+	return &st, err
+}
+
+func (s *Service) UpdateSettings(ctx context.Context, soc, actor uuid.UUID, photoRequired bool) (*Settings, error) {
+	if _, err := s.pool.Exec(ctx, `UPDATE societies SET walkin_photo_required=$2, updated_at=now() WHERE id=$1`, soc, photoRequired); err != nil {
+		return nil, err
+	}
+	s.log(ctx, soc, actor, "gate.settings", "society", soc, map[string]any{"walkin_photo_required": photoRequired})
+	return &Settings{WalkinPhotoRequired: photoRequired}, nil
+}
+
 // ── guards ───────────────────────────────────────────────────────────────────
 
 type Guard struct {
