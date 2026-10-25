@@ -25,7 +25,7 @@ func DemoPlatform(ctx context.Context, pool *pgxpool.Pool, u *usage.Service) err
 		return err
 	}
 	var have int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM usage_daily WHERE society_id=$1 AND day < current_date`, soc).Scan(&have); err != nil || have > 0 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM usage_daily WHERE society_id=$1 AND day < current_date - 1`, soc).Scan(&have); err != nil || have > 0 {
 		return err
 	}
 	// deterministic wobble so the charts are not flat
