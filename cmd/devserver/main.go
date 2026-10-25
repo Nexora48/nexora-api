@@ -81,6 +81,9 @@ func main() {
 	a := app.New(app.Deps{Cfg: cfg, Log: log, Pool: pool,
 		Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()}), SMS: sms.ConsoleSender{Log: log}})
 	a.Start(ctx)
+	if err := seed.DemoBilling(ctx, a.Billing); err != nil {
+		panic(err)
+	}
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: a.Router}
 	go func() {
 		log.Info("devserver ready", "addr", cfg.HTTPAddr,

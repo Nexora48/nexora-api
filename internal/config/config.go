@@ -45,6 +45,8 @@ type Config struct {
 	// Community (M7)
 	ComplaintAutoclose time.Duration
 	AmenityReminder    time.Duration
+	PublicBaseURL      string // where phones reach the API (hosted checkout links)
+	PaymentFake        bool   // use the test gateway when a society has none configured
 	ComplaintReopen    time.Duration
 	AttachmentMaxMB    int
 }
@@ -98,6 +100,8 @@ func Load() (Config, error) {
 	if v, err := strconv.Atoi(os.Getenv("AMENITY_REMINDER_MIN")); err == nil && v > 0 {
 		cfg.AmenityReminder = time.Duration(v) * time.Minute
 	}
+	cfg.PublicBaseURL = os.Getenv("PUBLIC_BASE_URL")
+	cfg.PaymentFake = os.Getenv("PAYMENT_PROVIDER") == "fake" || env == "dev"
 	cfg.FCMProjectID = os.Getenv("FCM_PROJECT_ID")
 	cfg.FCMCredentialsFile = os.Getenv("FCM_CREDENTIALS_FILE")
 	cfg.BlobPath = os.Getenv("BLOB_PATH")

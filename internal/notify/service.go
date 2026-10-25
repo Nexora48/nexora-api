@@ -91,6 +91,8 @@ func Group(t string) string {
 		return "amenities"
 	case strings.HasPrefix(t, "helper."), strings.HasPrefix(t, "attendance."):
 		return "helpers"
+	case strings.HasPrefix(t, "bill."):
+		return "billing"
 	}
 	return "system"
 }
@@ -338,7 +340,7 @@ type Pref struct {
 	Locked bool   `json:"locked"` // critical: cannot be switched off
 }
 
-var prefGroups = []struct{ key, label string }{{"visits", "Visitors & deliveries"}, {"community", "Notices & polls"}, {"complaints", "Complaints"}, {"amenities", "Amenity bookings"}, {"helpers", "Daily help"}, {"system", "Society updates"}}
+var prefGroups = []struct{ key, label string }{{"visits", "Visitors & deliveries"}, {"community", "Notices & polls"}, {"complaints", "Complaints"}, {"amenities", "Amenity bookings"}, {"helpers", "Daily help"}, {"billing", "Bills & payments"}, {"system", "Society updates"}}
 
 func (s *Service) Prefs(ctx context.Context, user uuid.UUID) ([]Pref, error) {
 	out := []Pref{}

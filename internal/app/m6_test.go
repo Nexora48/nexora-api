@@ -102,7 +102,7 @@ func TestNotificationInboxAndPrefs(t *testing.T) {
 	// preferences: visits push can be muted, the notification is still stored
 	prefs := call(t, "GET", "/api/v1/me/notification-prefs", r1, nil)
 	list, _ := prefs.Body["data"].([]any)
-	if prefs.Status != 200 || len(list) != 7 || list[6].(map[string]any)["group"] != "sos" || list[6].(map[string]any)["locked"] != true {
+	if prefs.Status != 200 || len(list) != 8 || list[7].(map[string]any)["group"] != "sos" || list[7].(map[string]any)["locked"] != true {
 		t.Fatalf("prefs: %d %v", prefs.Status, prefs.Body)
 	}
 	if r := call(t, "PUT", "/api/v1/me/notification-prefs", r1, map[string]any{"group": "visits", "push": false, "email": false}); r.Status != 200 {

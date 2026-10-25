@@ -5,7 +5,9 @@ import (
 	"context"
 	"github.com/Nexora48/nexora-api/internal/amenity"
 	"github.com/Nexora48/nexora-api/internal/attendance"
+	"github.com/Nexora48/nexora-api/internal/billing"
 	"github.com/Nexora48/nexora-api/internal/helper"
+	"github.com/Nexora48/nexora-api/internal/payment"
 	"log/slog"
 	"net/http"
 	"time"
@@ -69,6 +71,8 @@ type App struct {
 	Polls      *poll.Service
 	Amenities  *amenity.Service
 	Attendance *attendance.Service
+	Billing    *billing.Service
+	Payments   *payment.Service
 	Notify     *notify.Service
 	gates      *gate.Service
 }
@@ -85,6 +89,8 @@ func (a *App) Start(ctx context.Context) {
 	go a.Polls.RunSweeper(ctx, time.Minute)
 	go a.Amenities.RunSweeper(ctx, time.Minute)
 	go a.Attendance.RunSweeper(ctx, 10*time.Minute)
+	go a.Billing.RunSweeper(ctx, time.Hour)
+	go a.Payments.RunSweeper(ctx, time.Minute)
 }
 
 func New(d Deps) *App {
@@ -155,6 +161,18 @@ func New(d Deps) *App {
 	helperH := helper.NewHandler(helperSvc, files)
 	attendSvc := attendance.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
 	attendH := attendance.NewHandler(attendSvc, files)
+	billSvc := billing.NewService(d.Pool, aud, noteSvc, hub)
+	billH := billing.NewHandler(billSvc)
+	cipherKey := d.Cfg.PlatformEncKey
+	if cipherKey == "" {
+		cipherKey = "gateway:" + d.Cfg.JWTSecret
+	}
+	secretBox, err := superadmin.NewCipher(cipherKey)
+	if err != nil {
+		panic(err)
+	}
+	paySvc := payment.NewService(d.Pool, billSvc, aud, noteSvc, secretBox, d.Cfg.JWTSecret, d.Cfg.PaymentFake)
+	payH := payment.NewHandler(paySvc, d.Cfg.PublicBaseURL)
 	gateSvc := gate.NewService(d.Pool, aud, hub)
 	gateSvc.SetAttendance(attendSvc, feats)
 	gateH := gate.NewHandler(gateSvc, visitorSvc)
@@ -194,6 +212,8 @@ func New(d Deps) *App {
 	}))
 	r.Get("/health", hl.Live)
 	r.Get("/ready", hl.Ready)
+	r.Get("/pay/{id}", payH.Checkout)
+	r.Post("/pay/{id}/fake", payH.FakeConfirm)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/ping", hl.Live)
@@ -342,6 +362,22 @@ func New(d Deps) *App {
 			r.Get("/inside", attendH.Inside)
 			r.Get("/photo/{type}/{id}", attendH.GatePhoto)
 		})
+		r.Route("/bills", func(r chi.Router) {
+			r.Use(protect("bill.read", "payments")...)
+			r.Get("/", billH.Bills)
+			r.Get("/summary", billH.Summary)
+			r.Get("/{id}", billH.Bill)
+		})
+		r.With(protect("bill.read", "payments")...).Get("/ledger", billH.Ledger)
+		r.Route("/payments", func(r chi.Router) {
+			r.Use(protect("", "payments")...)
+			r.With(need("bill.read")).Get("/", billH.Payments)
+			r.With(need("bill.read")).Get("/{id}/receipt", billH.Receipt())
+			r.With(need("bill.read")).Get("/{id}/receipt.pdf", billH.ReceiptPDF())
+			r.With(need("payment.pay")).Post("/orders", payH.CreateOrder)
+			r.With(need("payment.pay")).Get("/orders/{id}", payH.Order)
+		})
+		r.Post("/webhooks/razorpay/{society}", payH.Razorpay)
 		r.Route("/polls", func(r chi.Router) {
 			r.Use(protect("poll.read", "polls")...)
 			r.Get("/", pollH.List)
@@ -443,6 +479,39 @@ func New(d Deps) *App {
 				r.Get("/attendance/export", attendH.Export)
 				r.Get("/attendance/{type}/{id}", attendH.Log)
 			})
+			r.Group(func(r chi.Router) { // billing: reads (admin + committee)
+				r.Use(protect("report.read", "payments")...)
+				r.Get("/billing/settings", billH.GetSettings)
+				r.Get("/billing/heads", billH.Heads)
+				r.Get("/invoices", billH.AdminInvoices)
+				r.Get("/invoices/export", billH.ExportInvoices)
+				r.Get("/invoices/{id}", billH.AdminInvoice)
+				r.Get("/payments", billH.AdminPayments)
+				r.Get("/payments/{id}/receipt", billH.OfficeReceipt())
+				r.Get("/payments/{id}/receipt.pdf", billH.OfficeReceiptPDF())
+				r.Get("/billing/dues", billH.Dues)
+				r.Get("/billing/defaulters/export", billH.ExportDefaulters)
+				r.Get("/billing/ledger/{id}", billH.FlatLedger)
+				r.Get("/billing/reports/collection", billH.Collection)
+			})
+			r.Group(func(r chi.Router) { // billing: changes (admin)
+				r.Use(protect("bill.manage", "payments")...)
+				r.Put("/billing/settings", billH.PutSettings)
+				r.Post("/billing/heads", billH.CreateHead)
+				r.Put("/billing/heads/{id}", billH.UpdateHead)
+				r.Delete("/billing/heads/{id}", billH.DeleteHead)
+				r.Get("/billing/gateway", payH.GetGateway)
+				r.Put("/billing/gateway", payH.PutGateway)
+				r.Post("/billing/gateway/test", payH.TestGateway)
+				r.Post("/invoices/generate", billH.Generate)
+				r.Post("/invoices/issue", billH.Issue)
+				r.Post("/invoices", billH.AdHoc)
+				r.Post("/invoices/{id}/void", billH.Void)
+				r.Post("/payments", billH.RecordPayment)
+				r.Post("/payments/{id}/bounce", billH.Bounce)
+				r.Post("/ledger/adjust", billH.Adjust)
+				r.Post("/billing/remind", billH.Remind)
+			})
 			r.Group(func(r chi.Router) { // polls
 				r.Use(protect("poll.manage", "polls")...)
 				r.Get("/polls", pollH.AdminList)
@@ -516,5 +585,5 @@ func New(d Deps) *App {
 			})
 		})
 	})
-	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notices: noticeSvc, Complaints: complaintSvc, Polls: pollSvc, Amenities: amenitySvc, Attendance: attendSvc, Notify: noteSvc, gates: gateSvc}
+	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notices: noticeSvc, Complaints: complaintSvc, Polls: pollSvc, Amenities: amenitySvc, Attendance: attendSvc, Billing: billSvc, Payments: paySvc, Notify: noteSvc, gates: gateSvc}
 }

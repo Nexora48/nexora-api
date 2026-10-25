@@ -1,5 +1,5 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 0.9.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls + M8 amenity booking, daily help, staff attendance. Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 1.0.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls + M8 amenity booking, daily help, staff attendance + M9 billing and payments (money in integer paise). Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: "http://localhost:8080" }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
@@ -439,6 +439,83 @@ paths:
     get: { summary: "Office: CSV sheet", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/society/attendance/manual:
     post: { summary: "Office: add a missed record {subject_type, subject_id, in_at, out_at, note?}", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/bills:
+    get: { summary: "My flat's invoices, ?group=open|paid, with lines. Feature: payments", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/bills/summary:
+    get: { summary: "Outstanding, overdue, next due date, advance credit and can_pay", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/bills/{id}:
+    get: { summary: "One invoice of my flat (drafts are never visible)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/ledger:
+    get: { summary: "My flat's statement (newest first) and balance: positive = owes, negative = advance credit", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/payments:
+    get: { summary: "My flat's payment history", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/payments/{id}/receipt:
+    get: { summary: "Receipt JSON", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/payments/{id}/receipt.pdf:
+    get: { summary: "Receipt PDF", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/payments/orders:
+    post: { summary: "Start an online payment {amount_paise?} (default: everything due); Idempotency-Key supported; returns checkout_url. 403 CANNOT_PAY, 409 NOTHING_DUE / PAYMENTS_NOT_CONFIGURED, 422 INVALID_AMOUNT", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/payments/orders/{id}:
+    get: { summary: "Order status for polling: created | paid | failed | expired. Only the verified gateway event marks it paid", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/webhooks/razorpay/{society}:
+    post: { summary: "Razorpay webhook; HMAC signature verified, de-duplicated by event id, idempotent. No JWT", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /pay/{id}:
+    get: { summary: "Hosted checkout page (?t= token); not under /api/v1", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/settings:
+    get: { summary: "Office: due day, grace days, late fee, vacant flats", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: "Office: update billing settings", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/heads:
+    get: { summary: "Office: charge heads", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Office: create a head {name, calc fixed|per_unit_type|per_sqft, amount_paise, rate_paise, rates[], recurring, one_time_period}", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/billing/heads/{id}:
+    put: { summary: "Office: edit a head", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    delete: { summary: "Office: deactivate a head", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/gateway:
+    get: { summary: "Office: gateway status and webhook URL; secrets are never returned", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: "Office: set the Razorpay key id and write-only secrets", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/gateway/test:
+    post: { summary: "Office: check the credentials", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/invoices/generate:
+    post: { summary: "Office: draft invoices for {period YYYY-MM} with warnings; repeatable until issued", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/invoices/issue:
+    post: { summary: "Office: publish the drafts of {period}; idempotent", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/invoices:
+    get: { summary: "Office: invoices, filters period, status (draft/open/overdue/paid/void), kind, block, flat", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Office: ad hoc invoice {unit_id, label, amount_paise, due_date?, note?}", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/invoices/export:
+    get: { summary: "Office: CSV of a period", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/invoices/{id}:
+    get: { summary: "Office: invoice with lines and payments", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/invoices/{id}/void:
+    post: { summary: "Office: void an unpaid invoice {reason}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/payments:
+    get: { summary: "Office: payments, ?unit_id=", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Office: record a payment {unit_id, amount_paise, mode cash|cheque|upi_transfer|bank_transfer, reference, paid_on?, note?}", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/payments/{id}/bounce:
+    post: { summary: "Office: reverse a cheque {reason}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/payments/{id}/receipt:
+    get: { summary: "Office: receipt JSON (.pdf for the document)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/ledger/adjust:
+    post: { summary: "Office: {unit_id, kind credit|debit, amount_paise, reason}", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/ledger/{id}:
+    get: { summary: "Office: a flat's statement", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/dues:
+    get: { summary: "Office: flats that owe money with ageing; ?overdue=1&block=&flat=", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/defaulters/export:
+    get: { summary: "Office: CSV of overdue flats", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/remind:
+    post: { summary: "Office: remind overdue flats {unit_ids?}; once per flat per 24 h", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/billing/reports/collection:
+    get: { summary: "Office: billed, collected, rate, ageing, last six periods and by block for ?period=", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/societies/{id}/subscription:
+    get: { summary: "Platform: a society's subscription", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    put: { summary: "Platform: set rate per unit, flat fee, billing day, status", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/billing/invoices:
+    get: { summary: "Platform: subscription invoices, filters society_id, status, period", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/billing/invoices/generate:
+    post: { summary: "Platform: create the month's invoices {period}; idempotent", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/billing/invoices/{id}/paid:
+    post: { summary: "Platform: mark paid {reference, paid_on?}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:

@@ -23,11 +23,13 @@ import (
 	"github.com/Nexora48/nexora-api/internal/amenity"
 	"github.com/Nexora48/nexora-api/internal/app"
 	"github.com/Nexora48/nexora-api/internal/attendance"
+	"github.com/Nexora48/nexora-api/internal/billing"
 	"github.com/Nexora48/nexora-api/internal/complaint"
 	"github.com/Nexora48/nexora-api/internal/config"
 	"github.com/Nexora48/nexora-api/internal/notice"
 	"github.com/Nexora48/nexora-api/internal/notification/sms"
 	"github.com/Nexora48/nexora-api/internal/notify"
+	"github.com/Nexora48/nexora-api/internal/payment"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
 	"github.com/Nexora48/nexora-api/internal/poll"
 	"github.com/Nexora48/nexora-api/internal/realtime"
@@ -53,6 +55,8 @@ var (
 	anote       *notify.Service
 	aamenity    *amenity.Service
 	aattend     *attendance.Service
+	abill       *billing.Service
+	apay        *payment.Service
 	pushRec     *pushRecorder
 )
 
@@ -82,7 +86,7 @@ func TestMain(m *testing.M) {
 	cfg := config.Config{Env: "test", JWTSecret: strings.Repeat("k", 40),
 		AccessTTL: 15 * 60 * 1e9, RefreshTTL: 30 * 24 * 3600 * 1e9, OTPTTL: 5 * 60 * 1e9,
 		PlatformJWTSecret: strings.Repeat("p", 40), PlatformEncKey: strings.Repeat("e", 40),
-		PlatformAccessTTL: 15 * 60 * 1e9, PlatformRefreshTTL: 7 * 24 * 3600 * 1e9, AmenityReminder: time.Hour}
+		PlatformAccessTTL: 15 * 60 * 1e9, PlatformRefreshTTL: 7 * 24 * 3600 * 1e9, AmenityReminder: time.Hour, PaymentFake: true}
 	var cerr error
 	saCipher, cerr = superadmin.NewCipher(cfg.PlatformEncKey)
 	if cerr != nil {
@@ -101,6 +105,8 @@ func TestMain(m *testing.M) {
 	anote = a.Notify
 	aamenity = a.Amenities
 	aattend = a.Attendance
+	abill = a.Billing
+	apay = a.Payments
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)
 	a.Router.With(a.Protect("", "visitors")...).Get("/t/feature", ok)
