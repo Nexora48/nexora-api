@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -274,6 +275,7 @@ func (s *Service) RunWorker(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			heartbeat.Beat("notify-outbox")
 			s.Retry(ctx)
 			if time.Since(last) > time.Hour {
 				s.Cleanup(ctx)

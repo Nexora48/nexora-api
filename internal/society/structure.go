@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/limits"
 	"sort"
 	"strings"
 	"time"
@@ -129,6 +130,8 @@ type BulkResult struct {
 	Numbers []string `json:"numbers"`
 	Created int      `json:"created"`
 	Skipped []string `json:"skipped_existing"`
+	// SkippedLimit lists numbers that were not created because the plan's flat limit was reached.
+	SkippedLimit []string `json:"skipped_plan_limit"`
 }
 
 func formatNumber(format, block string, floor, seq int) string {
@@ -142,7 +145,7 @@ func formatNumber(format, block string, floor, seq int) string {
 
 // BulkCreateUnits generates units for a block. With dryRun nothing is written.
 func (r *Repository) BulkCreateUnits(ctx context.Context, societyID uuid.UUID, block *Block, spec BulkSpec, dryRun bool) (*BulkResult, error) {
-	res := &BulkResult{Numbers: []string{}, Skipped: []string{}}
+	res := &BulkResult{Numbers: []string{}, Skipped: []string{}, SkippedLimit: []string{}}
 	type item struct {
 		floor  int
 		number string
@@ -176,6 +179,10 @@ func (r *Repository) BulkCreateUnits(ctx context.Context, societyID uuid.UUID, b
 	}
 	rows.Close()
 
+	room, err := r.limits.Room(ctx, societyID, limits.MaxUnits)
+	if err != nil {
+		return nil, err
+	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -185,6 +192,13 @@ func (r *Repository) BulkCreateUnits(ctx context.Context, societyID uuid.UUID, b
 		if existing[it.number] {
 			res.Skipped = append(res.Skipped, it.number)
 			continue
+		}
+		if room == 0 {
+			res.SkippedLimit = append(res.SkippedLimit, it.number)
+			continue
+		}
+		if room > 0 {
+			room--
 		}
 		if !dryRun {
 			if _, err := tx.Exec(ctx, `INSERT INTO units (society_id, block_id, floor, number, unit_type) VALUES ($1,$2,$3,$4,$5)`,
@@ -277,6 +291,9 @@ func (r *Repository) GetUnit(ctx context.Context, societyID, id uuid.UUID) (*Uni
 }
 
 func (r *Repository) CreateUnit(ctx context.Context, societyID, blockID uuid.UUID, floor int, number, unitType string, area *int) (*Unit, error) {
+	if err := r.limits.Check(ctx, societyID, limits.MaxUnits, 1); err != nil {
+		return nil, err
+	}
 	var id uuid.UUID
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO units (society_id, block_id, floor, number, unit_type, area_sqft)

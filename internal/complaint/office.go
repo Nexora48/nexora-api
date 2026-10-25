@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
 	"io"
 	"strings"
 	"time"
@@ -423,6 +424,7 @@ func (s *Service) RunSweeper(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			heartbeat.Beat("complaints")
 			_, _ = s.AutoClose(ctx)
 			_, _ = s.Digest(ctx)
 		}

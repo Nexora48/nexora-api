@@ -84,6 +84,9 @@ func main() {
 	if err := seed.DemoBilling(ctx, a.Billing); err != nil {
 		panic(err)
 	}
+	if err := seed.DemoPlatform(ctx, pool, a.Usage); err != nil {
+		panic(err)
+	}
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: a.Router}
 	go func() {
 		log.Info("devserver ready", "addr", cfg.HTTPAddr,

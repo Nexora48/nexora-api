@@ -7,7 +7,9 @@ import (
 	"github.com/Nexora48/nexora-api/internal/attendance"
 	"github.com/Nexora48/nexora-api/internal/billing"
 	"github.com/Nexora48/nexora-api/internal/helper"
+	"github.com/Nexora48/nexora-api/internal/limits"
 	"github.com/Nexora48/nexora-api/internal/payment"
+	"github.com/Nexora48/nexora-api/internal/usage"
 	"log/slog"
 	"net/http"
 	"time"
@@ -56,6 +58,9 @@ type Deps struct {
 	Push notify.Sender
 }
 
+// APIVersion is reported on the SuperAdmin health page.
+const APIVersion = "1.1.0"
+
 // App exposes the router plus the middleware factory modules use to guard routes.
 type App struct {
 	Router *chi.Mux
@@ -74,6 +79,8 @@ type App struct {
 	Billing    *billing.Service
 	Payments   *payment.Service
 	Notify     *notify.Service
+	Usage      *usage.Service
+	Platform   *superadmin.Service
 	gates      *gate.Service
 }
 
@@ -90,6 +97,11 @@ func (a *App) Start(ctx context.Context) {
 	go a.Amenities.RunSweeper(ctx, time.Minute)
 	go a.Attendance.RunSweeper(ctx, 10*time.Minute)
 	go a.Billing.RunSweeper(ctx, time.Hour)
+	go a.Usage.RunSweeper(ctx, time.Hour)
+	if a.Platform != nil {
+		go a.Platform.RunRetention(ctx)
+		go a.Platform.RunBroadcasts(ctx)
+	}
 	go a.Payments.RunSweeper(ctx, time.Minute)
 }
 
@@ -97,6 +109,9 @@ func New(d Deps) *App {
 	tokens := auth.NewTokenManager(d.Cfg.JWTSecret, d.Cfg.AccessTTL)
 	users := user.NewRepository(d.Pool)
 	societies := society.NewRepository(d.Pool)
+	planLimits := limits.New(d.Pool)
+	usageSvc := usage.New(d.Pool)
+	societies.SetLimits(planLimits)
 	rb := rbac.New(d.Pool)
 	feats := feature.New(d.Pool)
 	aud := audit.New(d.Pool)
@@ -105,8 +120,12 @@ func New(d Deps) *App {
 	authH := auth.NewHandler(authSvc)
 	meH := user.NewHandler(users, societies, rb, feats)
 	societyH := society.NewHandler(societies, aud)
-	residentH := resident.NewHandler(resident.NewService(d.Pool, aud))
-	householdH := household.NewHandler(household.NewService(d.Pool, aud))
+	residentSvc := resident.NewService(d.Pool, aud)
+	residentSvc.SetLimits(planLimits)
+	residentH := resident.NewHandler(residentSvc)
+	householdSvc := household.NewService(d.Pool, aud)
+	householdSvc.SetLimits(planLimits)
+	householdH := household.NewHandler(householdSvc)
 	visitorSvc := visitor.NewService(d.Pool, d.Redis, aud, d.Cfg.JWTSecret, d.Cfg.VisitorMaxWindow, d.Cfg.VisitorWalkinWait)
 	visitorH := visitor.NewHandler(visitorSvc)
 	hub := realtime.NewHub(d.Redis)
@@ -175,6 +194,7 @@ func New(d Deps) *App {
 	payH := payment.NewHandler(paySvc, d.Cfg.PublicBaseURL)
 	gateSvc := gate.NewService(d.Pool, aud, hub)
 	gateSvc.SetAttendance(attendSvc, feats)
+	gateSvc.SetLimits(planLimits)
 	gateH := gate.NewHandler(gateSvc, visitorSvc)
 	wsH := realtime.NewHandler(hub, tokens, d.Pool, d.Cfg.CORSOrigins)
 	need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
@@ -200,6 +220,9 @@ func New(d Deps) *App {
 	if cipher, err := superadmin.NewCipher(d.Cfg.PlatformEncKey); err == nil && d.Cfg.PlatformJWTSecret != "" {
 		saSvc = superadmin.NewService(d.Pool, superadmin.NewTokens(d.Cfg.PlatformJWTSecret, d.Cfg.PlatformAccessTTL), cipher, d.Redis, aud, d.Cfg.PlatformRefreshTTL)
 		saSvc.SetFeaturesHook(dispatcher.FeaturesChanged)
+		saSvc.SetNotifier(noteSvc)
+		saSvc.SetHub(hub)
+		saSvc.SetBuild(APIVersion)
 	}
 
 	r := chi.NewRouter()
@@ -220,6 +243,7 @@ func New(d Deps) *App {
 		r.Get("/ws", wsH.ServeHTTP)
 		if saSvc != nil {
 			superadmin.Mount(r, saSvc, d.Redis, d.Cfg.PlatformAllowedCIDRs)
+			r.With(middleware.RateLimit(d.Redis, "app-config", 120, time.Minute)).Get("/app-config", superadmin.AppConfigHandler(saSvc))
 		}
 
 		r.Route("/auth", func(r chi.Router) {
@@ -405,6 +429,7 @@ func New(d Deps) *App {
 		})
 
 		r.Route("/society", func(r chi.Router) {
+			r.With(protect("report.read", "")...).Get("/plan", planLimits.MyPlan)
 			r.Group(func(r chi.Router) { // notice board management
 				r.Use(protect("notice.manage", "community")...)
 				r.Get("/notices", noticeH.AdminList)
@@ -585,5 +610,5 @@ func New(d Deps) *App {
 			})
 		})
 	})
-	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notices: noticeSvc, Complaints: complaintSvc, Polls: pollSvc, Amenities: amenitySvc, Attendance: attendSvc, Billing: billSvc, Payments: paySvc, Notify: noteSvc, gates: gateSvc}
+	return &App{Router: r, Protect: protect, Visitors: visitorSvc, Hub: hub, Sos: sosSvc, Notices: noticeSvc, Complaints: complaintSvc, Polls: pollSvc, Amenities: amenitySvc, Attendance: attendSvc, Billing: billSvc, Payments: paySvc, Notify: noteSvc, Usage: usageSvc, Platform: saSvc, gates: gateSvc}
 }

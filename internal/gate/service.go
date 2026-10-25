@@ -6,7 +6,9 @@ import (
 	"errors"
 	"github.com/Nexora48/nexora-api/internal/attendance"
 	"github.com/Nexora48/nexora-api/internal/feature"
+	"github.com/Nexora48/nexora-api/internal/limits"
 	"github.com/Nexora48/nexora-api/internal/platform/authctx"
+	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
 	"net/http"
 	"strings"
 	"time"
@@ -33,12 +35,16 @@ var (
 )
 
 type Service struct {
-	pool  *pgxpool.Pool
-	audit *audit.Logger
-	hub   *realtime.Hub
-	att   *attendance.Service
-	feats *feature.Service
+	pool   *pgxpool.Pool
+	audit  *audit.Logger
+	hub    *realtime.Hub
+	att    *attendance.Service
+	feats  *feature.Service
+	limits *limits.Checker
 }
+
+// SetLimits turns on plan-limit checks for new guards.
+func (s *Service) SetLimits(l *limits.Checker) { s.limits = l }
 
 func NewService(pool *pgxpool.Pool, a *audit.Logger, hub *realtime.Hub) *Service {
 	return &Service{pool: pool, audit: a, hub: hub}
@@ -222,6 +228,9 @@ func (s *Service) guard(ctx context.Context, soc, id uuid.UUID) (*Guard, error) 
 }
 
 func (s *Service) CreateGuard(ctx context.Context, soc, actor uuid.UUID, fullName, phone string) (*Guard, error) {
+	if err := s.limits.Check(ctx, soc, limits.MaxGuards, 1); err != nil {
+		return nil, err
+	}
 	name, ok := cleanName(fullName, 80)
 	if !ok {
 		return nil, ErrBadName
@@ -413,6 +422,7 @@ func (s *Service) RunSweeper(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			heartbeat.Beat("gates")
 			_, _ = s.SweepShifts(ctx)
 		}
 	}

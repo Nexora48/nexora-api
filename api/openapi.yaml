@@ -1,5 +1,5 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 1.0.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls + M8 amenity booking, daily help, staff attendance + M9 billing and payments (money in integer paise). Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 1.1.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls + M8 amenity booking, daily help, staff attendance + M9 billing and payments (money in integer paise) + M10 plans and limits, usage analytics, audit v2, staff, broadcast, health, app versions. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: "http://localhost:8080" }]
 paths:
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
@@ -516,6 +516,65 @@ paths:
     post: { summary: "Platform: create the month's invoices {period}; idempotent", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/billing/invoices/{id}/paid:
     post: { summary: "Platform: mark paid {reference, paid_on?}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/plan:
+    get: { summary: "Office: my plan, limits and live usage (read-only)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/app-config:
+    get: { summary: "Public: ?app=living|admin|get&version=1.2.0 → {update: none|available|required, latest, message, store_url}; fails open", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/plans:
+    get: { summary: "Platform: plan catalogue with society counts", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Platform: create plan {key,name,rate_per_unit_paise,flat_fee_paise,features[],limits{}}", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/plans/{id}:
+    get: { summary: "Platform: one plan", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    put: { summary: "Platform: edit plan; apply_to_societies re-prices societies on it", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/plans/{id}/archive:
+    post: { summary: "Platform: archive (refused while in use)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/plans/{id}/societies:
+    get: { summary: "Platform: societies on a plan", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/societies/{id}/plan:
+    put: { summary: "Platform: assign plan {plan_id, keep_custom_price}; copies price, sets services, reports exceeded limits", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/societies/{id}/usage:
+    get: { summary: "Platform: society usage vs limits, month totals, 30-day series, services differing from plan", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/analytics/metrics:
+    get: { summary: "Platform: metric catalogue", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/analytics/overview:
+    get: { summary: "Platform: DAU, MAU, MRR, series, top societies, unused services, alerts (?range=7|30|90|365)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/analytics/services:
+    get: { summary: "Platform: per-service adoption (enabled vs used) and the unused list", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/analytics/timeseries:
+    get: { summary: "Platform: ?metric=&range=&society_id= zero-filled daily series", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/analytics/top:
+    get: { summary: "Platform: ?metric=&range= leaderboard of societies", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/audit:
+    get: { summary: "Platform: filters society_id, actor, actor_type, action (prefix*), entity, q, from, to", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/audit/{id}:
+    get: { summary: "Platform: one entry with actor details and full meta", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/audit/export.csv:
+    get: { summary: "Platform: CSV of the filtered log (50,000 rows max); the export is audited", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/audit/settings:
+    get: { summary: "Platform: retention days", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: "Platform: set retention {retention_days 30-3650}", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/staff:
+    get: { summary: "Platform (super_admin): staff list", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Platform (super_admin): invite {email, full_name, role}; returns the one-time invite token", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/staff/{id}:
+    put: { summary: "Platform (super_admin): change role/status; not yourself, never the last super admin", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/staff/{id}/reinvite:
+    post: { summary: "Platform (super_admin): new invite token for a pending user", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/staff/{id}/reset-mfa:
+    post: { summary: "Platform (super_admin): clear authenticator; user re-enrols at next sign-in", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/auth/accept-invite:
+    post: { summary: "Public: {token, password} sets the password; the token works once", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/broadcasts:
+    get: { summary: "Platform: broadcast history", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Platform (super_admin): {title, body, link?, audience{all|plan_ids|society_ids}, include_residents, preview?}; 5 per day", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/broadcasts/{id}/cancel:
+    post: { summary: "Platform (super_admin): cancel before the first batch is sent", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/health:
+    get: { summary: "Platform: database, Redis, migrations, outbox, webhooks, live connections, job heartbeats", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/app-versions:
+    get: { summary: "Platform: minimum and latest version per app", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/superadmin/app-versions/{app}:
+    put: { summary: "Platform (super_admin): {min_version, latest_version, message, store_url}", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:

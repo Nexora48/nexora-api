@@ -367,34 +367,6 @@ func parseTime(v string) *time.Time {
 	return nil
 }
 
-func (h *Handler) Audit(w http.ResponseWriter, r *http.Request) {
-	pg := pagination.FromRequest(r)
-	q := r.URL.Query()
-	f := AuditFilter{Action: q.Get("action"), From: parseTime(q.Get("from")), To: parseTime(q.Get("to")), Limit: pg.PageSize, Offset: pg.Offset()}
-	if v := q.Get("society_id"); v != "" {
-		id, err := uuid.Parse(v)
-		if err != nil {
-			httpx.Fail(w, httpx.NewError(http.StatusBadRequest, "VALIDATION", "invalid society_id"))
-			return
-		}
-		f.SocietyID = &id
-	}
-	if v := q.Get("actor"); v != "" {
-		id, err := uuid.Parse(v)
-		if err != nil {
-			httpx.Fail(w, httpx.NewError(http.StatusBadRequest, "VALIDATION", "invalid actor"))
-			return
-		}
-		f.ActorID = &id
-	}
-	rows, total, err := h.svc.ListAudit(r.Context(), f)
-	if err != nil {
-		httpx.Fail(w, err)
-		return
-	}
-	httpx.OK(w, rows, pg.Meta(total))
-}
-
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	st, err := h.svc.Stats(r.Context())
 	if err != nil {
@@ -416,6 +388,7 @@ func Mount(r chi.Router, svc *Service, rdb *redis.Client, allowedCIDRs []string)
 			r.With(middleware.RateLimit(rdb, "pf-login", 30, 10*time.Minute)).Post("/login", h.Login)
 			r.With(middleware.RateLimit(rdb, "pf-mfa", 60, 10*time.Minute)).Post("/mfa/verify", h.VerifyMFA)
 			r.Post("/refresh", h.Refresh)
+			r.With(middleware.RateLimit(rdb, "pf-invite", 20, 10*time.Minute)).Post("/accept-invite", h.AcceptInvite)
 			r.With(svc.PlatformAuth).Post("/logout", h.Logout)
 		})
 
@@ -425,10 +398,11 @@ func Mount(r chi.Router, svc *Service, rdb *redis.Client, allowedCIDRs []string)
 			r.Get("/societies", h.ListSocieties)
 			r.Get("/societies/{id}", h.GetSociety)
 			r.Get("/features", h.Catalogue)
-			r.Get("/audit", h.Audit)
+			r.Get("/audit", h.AuditV2)
 			r.Get("/stats", h.Stats)
 			r.Get("/societies/{id}/subscription", h.GetSubscription)
 			r.Get("/billing/invoices", h.ListPlatformInvoices)
+			h.mountReads(r)
 
 			r.Group(func(r chi.Router) { // mutations: super_admin only
 				r.Use(RequireSuper)
@@ -443,6 +417,7 @@ func Mount(r chi.Router, svc *Service, rdb *redis.Client, allowedCIDRs []string)
 				r.Post("/societies/{id}/admins/{userId}/reset-password", h.ResetAdminPassword)
 				r.Put("/societies/{id}/features/{key}", h.SetFeature)
 				r.Post("/societies/{id}/features/bulk", h.BulkFeatures)
+				h.mountWrites(r)
 			})
 		})
 	})

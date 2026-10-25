@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
 	"net/http"
 	"strings"
 	"time"
@@ -602,6 +603,7 @@ func (s *Service) RunSweeper(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			heartbeat.Beat("notices")
 			_, _ = s.Sweep(ctx)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/limits"
 	"math/big"
 	"net/http"
 	"regexp"
@@ -453,6 +454,9 @@ func (s *Service) AddAdmin(ctx context.Context, actor, societyID uuid.UUID, in A
 	if !exists {
 		return nil, ErrSocietyNotFound
 	}
+	if err := limits.New(s.store.pool).Check(ctx, societyID, limits.MaxAdmins, 1); err != nil {
+		return nil, err
+	}
 	tx, err := s.store.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -517,6 +521,8 @@ type AuditRow struct {
 	ActorType   string          `json:"actor_type"`
 	ActorID     *uuid.UUID      `json:"actor_id,omitempty"`
 	ActorName   *string         `json:"actor_name,omitempty"`
+	ActorEmail  *string         `json:"actor_email,omitempty"`
+	ActorRole   *string         `json:"actor_role,omitempty"`
 	SocietyID   *uuid.UUID      `json:"society_id,omitempty"`
 	SocietyName *string         `json:"society_name,omitempty"`
 	Action      string          `json:"action"`
@@ -530,13 +536,16 @@ type AuditRow struct {
 type AuditFilter struct {
 	SocietyID *uuid.UUID
 	ActorID   *uuid.UUID
+	ActorType string // user | platform | system
 	Action    string // exact or prefix ending with '*', e.g. "feature.*"
+	Entity    string
+	Text      string // matches entity id, action or entity (substring)
 	From, To  *time.Time
 	Limit     int
 	Offset    int
 }
 
-func (s *Service) ListAudit(ctx context.Context, f AuditFilter) ([]AuditRow, int, error) {
+func (f AuditFilter) where() (string, []any) {
 	args := []any{}
 	where := []string{"true"}
 	add := func(cond string, v any) {
@@ -548,6 +557,15 @@ func (s *Service) ListAudit(ctx context.Context, f AuditFilter) ([]AuditRow, int
 	}
 	if f.ActorID != nil {
 		add("a.actor_id = ?", *f.ActorID)
+	}
+	if f.ActorType != "" {
+		add("a.actor_type = ?", f.ActorType)
+	}
+	if f.Entity != "" {
+		add("a.entity = ?", f.Entity)
+	}
+	if f.Text != "" {
+		add("(a.entity_id = ? OR a.action ILIKE '%' || ? || '%' OR a.entity ILIKE '%' || ? || '%')", f.Text)
 	}
 	if f.Action != "" {
 		if strings.HasSuffix(f.Action, "*") {
@@ -562,15 +580,31 @@ func (s *Service) ListAudit(ctx context.Context, f AuditFilter) ([]AuditRow, int
 	if f.To != nil {
 		add("a.created_at < ?", *f.To)
 	}
+	return strings.Join(where, " AND "), args
+}
+
+const auditSelect = `
+	SELECT a.id, a.actor_type, a.actor_id, COALESCE(pu.full_name, uu.full_name), COALESCE(pu.email, uu.email), pu.role, a.society_id, so.name,
+	       a.action, a.entity, a.entity_id, a.meta, a.ip, a.created_at`
+
+const auditFrom = `
+	FROM audit_logs a
+	LEFT JOIN platform_users pu ON pu.id = a.actor_id AND a.actor_type='platform'
+	LEFT JOIN users uu ON uu.id = a.actor_id AND a.actor_type='user'
+	LEFT JOIN societies so ON so.id = a.society_id`
+
+func scanAudit(row pgx.Row, extra ...any) (AuditRow, error) {
+	var r AuditRow
+	dst := append([]any{&r.ID, &r.ActorType, &r.ActorID, &r.ActorName, &r.ActorEmail, &r.ActorRole, &r.SocietyID, &r.SocietyName, &r.Action, &r.Entity, &r.EntityID, &r.Meta, &r.IP, &r.CreatedAt}, extra...)
+	err := row.Scan(dst...)
+	return r, err
+}
+
+func (s *Service) ListAudit(ctx context.Context, f AuditFilter) ([]AuditRow, int, error) {
+	cond, args := f.where()
 	args = append(args, f.Limit, f.Offset)
-	rows, err := s.store.pool.Query(ctx, `
-		SELECT a.id, a.actor_type, a.actor_id, COALESCE(pu.full_name, uu.full_name), a.society_id, so.name,
-		       a.action, a.entity, a.entity_id, a.meta, a.ip, a.created_at, count(*) OVER()
-		FROM audit_logs a
-		LEFT JOIN platform_users pu ON pu.id = a.actor_id AND a.actor_type='platform'
-		LEFT JOIN users uu ON uu.id = a.actor_id AND a.actor_type='user'
-		LEFT JOIN societies so ON so.id = a.society_id
-		WHERE `+strings.Join(where, " AND ")+fmt.Sprintf(` ORDER BY a.created_at DESC, a.id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+	rows, err := s.store.pool.Query(ctx, auditSelect+`, count(*) OVER()`+auditFrom+` WHERE `+cond+
+		fmt.Sprintf(` ORDER BY a.created_at DESC, a.id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -578,13 +612,25 @@ func (s *Service) ListAudit(ctx context.Context, f AuditFilter) ([]AuditRow, int
 	out := []AuditRow{}
 	total := 0
 	for rows.Next() {
-		var r AuditRow
-		if err := rows.Scan(&r.ID, &r.ActorType, &r.ActorID, &r.ActorName, &r.SocietyID, &r.SocietyName, &r.Action, &r.Entity, &r.EntityID, &r.Meta, &r.IP, &r.CreatedAt, &total); err != nil {
+		r, err := scanAudit(rows, &total)
+		if err != nil {
 			return nil, 0, err
 		}
 		out = append(out, r)
 	}
 	return out, total, rows.Err()
+}
+
+// GetAudit returns one audit row with the actor's details.
+func (s *Service) GetAudit(ctx context.Context, id int64) (*AuditRow, error) {
+	r, err := scanAudit(s.store.pool.QueryRow(ctx, auditSelect+auditFrom+` WHERE a.id=$1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrAuditNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // ── Stats ────────────────────────────────────────────────────────────────────

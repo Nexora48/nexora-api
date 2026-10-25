@@ -3,6 +3,7 @@ package resident
 import (
 	"context"
 	"errors"
+	"github.com/Nexora48/nexora-api/internal/limits"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -95,9 +96,13 @@ func last4(s string) string {
 }
 
 type Service struct {
-	pool  *pgxpool.Pool
-	audit *audit.Logger
+	pool   *pgxpool.Pool
+	audit  *audit.Logger
+	limits *limits.Checker
 }
+
+// SetLimits turns on plan-limit checks for new residents.
+func (s *Service) SetLimits(l *limits.Checker) { s.limits = l }
 
 func NewService(pool *pgxpool.Pool, a *audit.Logger) *Service { return &Service{pool: pool, audit: a} }
 
@@ -236,6 +241,9 @@ func boolOr(p *bool, def bool) bool {
 }
 
 func (s *Service) Create(ctx context.Context, societyID, actorID uuid.UUID, in CreateInput) (*Detail, error) {
+	if err := s.limits.Check(ctx, societyID, limits.MaxResidents, 1); err != nil {
+		return nil, err
+	}
 	role, ok := typeToRole[in.Type]
 	if !ok {
 		return nil, httpx.NewError(http.StatusBadRequest, "VALIDATION", "type must be owner, tenant or family")

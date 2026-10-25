@@ -4,6 +4,7 @@ package household
 import (
 	"context"
 	"errors"
+	"github.com/Nexora48/nexora-api/internal/limits"
 	"net/http"
 	"regexp"
 	"strings"
@@ -39,9 +40,13 @@ func NormalizeVehicle(s string) string {
 }
 
 type Service struct {
-	pool  *pgxpool.Pool
-	audit *audit.Logger
+	pool   *pgxpool.Pool
+	audit  *audit.Logger
+	limits *limits.Checker
 }
+
+// SetLimits turns on plan-limit checks for new family members with a login.
+func (s *Service) SetLimits(l *limits.Checker) { s.limits = l }
 
 func NewService(pool *pgxpool.Pool, a *audit.Logger) *Service { return &Service{pool: pool, audit: a} }
 
@@ -233,6 +238,11 @@ func (s *Service) ListFamily(ctx context.Context, p authctx.Principal) ([]reside
 }
 
 func (s *Service) AddFamily(ctx context.Context, p authctx.Principal, in FamilyInput) (*resident.FamilyMember, error) {
+	if in.Phone != nil && strings.TrimSpace(*in.Phone) != "" {
+		if err := s.limits.Check(ctx, p.SocietyID, limits.MaxResidents, 1); err != nil {
+			return nil, err
+		}
+	}
 	unitID, err := s.unitOf(ctx, p)
 	if err != nil {
 		return nil, err

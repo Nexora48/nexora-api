@@ -3,6 +3,7 @@ package society
 import (
 	"context"
 	"errors"
+	"github.com/Nexora48/nexora-api/internal/limits"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,7 +27,13 @@ type Society struct {
 
 func (s Society) IsUsable() bool { return s.Status != StatusSuspended }
 
-type Repository struct{ pool *pgxpool.Pool }
+type Repository struct {
+	pool   *pgxpool.Pool
+	limits *limits.Checker
+}
+
+// SetLimits turns on plan-limit checks for new flats.
+func (r *Repository) SetLimits(l *limits.Checker) { r.limits = l }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 

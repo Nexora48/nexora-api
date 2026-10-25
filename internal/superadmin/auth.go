@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/notify"
 	"net/http"
 	"strings"
 	"time"
@@ -64,6 +65,10 @@ type Service struct {
 	audit      *audit.Logger
 	refreshTTL time.Duration
 	onFeatures func(context.Context, uuid.UUID)
+	notifier   *notify.Service
+	batch      int
+	version    string
+	hub        interface{ Count() int }
 }
 
 // SetFeaturesHook is called after service switches change (apps are told to reload them).

@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
 	"io"
 	"net/http"
 	"strings"
@@ -613,6 +614,7 @@ func (s *Service) RunSweeper(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			heartbeat.Beat("polls")
 			_, _, _ = s.Sweep(ctx)
 		}
 	}

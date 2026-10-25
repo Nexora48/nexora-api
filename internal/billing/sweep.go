@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
 	"strings"
 	"time"
 
@@ -115,6 +116,7 @@ func (s *Service) RunSweeper(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			heartbeat.Beat("billing")
 			_, _, _ = s.Sweep(ctx)
 		}
 	}

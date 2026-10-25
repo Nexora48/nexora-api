@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"github.com/Nexora48/nexora-api/internal/usage"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,8 @@ var (
 	srv  *httptest.Server
 
 	saCipher    *superadmin.Cipher
+	aplat       *superadmin.Service
+	ausage      *usage.Service
 	vsvc        *visitor.Service
 	ahub        *realtime.Hub
 	asos        *sos.Service
@@ -107,6 +110,8 @@ func TestMain(m *testing.M) {
 	aattend = a.Attendance
 	abill = a.Billing
 	apay = a.Payments
+	aplat = a.Platform
+	ausage = a.Usage
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)
 	a.Router.With(a.Protect("", "visitors")...).Get("/t/feature", ok)
