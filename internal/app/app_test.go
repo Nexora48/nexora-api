@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"github.com/Nexora48/nexora-api/internal/usage"
+	"github.com/go-chi/chi/v5"
 	"io"
 	"log/slog"
 	"net/http"
@@ -48,6 +49,8 @@ var (
 
 	saCipher    *superadmin.Cipher
 	aplat       *superadmin.Service
+	arouter     *chi.Mux
+	testDBURL   string
 	ausage      *usage.Service
 	vsvc        *visitor.Service
 	ahub        *realtime.Hub
@@ -72,11 +75,13 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	testDBURL = url
 	ctx := context.Background()
 	if err := database.MigrateUp(url, db.Migrations); err != nil {
 		panic(err)
 	}
-	pool, err = database.NewPostgres(ctx, url)
+	// TEST_RLS=1 runs the whole suite through the row-level-security role (see `make test-rls`)
+	pool, err = database.NewPostgres(ctx, url, database.Options{RLS: os.Getenv("TEST_RLS") == "1"})
 	if err != nil {
 		panic(err)
 	}
@@ -111,6 +116,7 @@ func TestMain(m *testing.M) {
 	abill = a.Billing
 	apay = a.Payments
 	aplat = a.Platform
+	arouter = a.Router
 	ausage = a.Usage
 	// Test-only guarded routes exercising the middleware chain.
 	a.Router.With(a.Protect("visitor.approve", "")...).Get("/t/perm", ok)

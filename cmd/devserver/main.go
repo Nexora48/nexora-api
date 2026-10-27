@@ -87,7 +87,9 @@ func main() {
 	if err := seed.DemoPlatform(ctx, pool, a.Usage); err != nil {
 		panic(err)
 	}
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: a.Router}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: a.Router,
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second,
+		IdleTimeout: 120 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() {
 		log.Info("devserver ready", "addr", cfg.HTTPAddr,
 			"admin", seed.AdminEmail+" / "+seed.AdminPass, "resident_phone", seed.ResidentPhone, "otp", "123456")

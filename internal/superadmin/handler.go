@@ -385,8 +385,8 @@ func Mount(r chi.Router, svc *Service, rdb *redis.Client, allowedCIDRs []string)
 		r.Use(IPAllowlist(allowedCIDRs))
 
 		r.Route("/auth", func(r chi.Router) {
-			r.With(middleware.RateLimit(rdb, "pf-login", 30, 10*time.Minute)).Post("/login", h.Login)
-			r.With(middleware.RateLimit(rdb, "pf-mfa", 60, 10*time.Minute)).Post("/mfa/verify", h.VerifyMFA)
+			r.With(middleware.RateLimitStrict(rdb, "pf-login", 30, 10*time.Minute)).Post("/login", h.Login)
+			r.With(middleware.RateLimitStrict(rdb, "pf-mfa", 60, 10*time.Minute)).Post("/mfa/verify", h.VerifyMFA)
 			r.Post("/refresh", h.Refresh)
 			r.With(middleware.RateLimit(rdb, "pf-invite", 20, 10*time.Minute)).Post("/accept-invite", h.AcceptInvite)
 			r.With(svc.PlatformAuth).Post("/logout", h.Logout)

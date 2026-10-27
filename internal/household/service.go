@@ -62,7 +62,8 @@ func (s *Service) unitOf(ctx context.Context, p authctx.Principal) (uuid.UUID, e
 
 func (s *Service) isShared(ctx context.Context, userID, societyID uuid.UUID) (bool, error) {
 	var shared bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM memberships WHERE user_id=$1 AND society_id<>$2)`, userID, societyID).Scan(&shared)
+	// Unscoped on purpose: this asks about the same person's memberships in other societies
+	err := s.pool.QueryRow(database.Unscoped(ctx), `SELECT EXISTS (SELECT 1 FROM memberships WHERE user_id=$1 AND society_id<>$2)`, userID, societyID).Scan(&shared)
 	return shared, err
 }
 

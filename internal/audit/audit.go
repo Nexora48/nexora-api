@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Nexora48/nexora-api/internal/platform/metrics"
 )
 
 type Entry struct {
@@ -28,6 +30,12 @@ func New(pool *pgxpool.Pool) *Logger { return &Logger{pool: pool} }
 func (l *Logger) Log(ctx context.Context, e Entry) {
 	if e.ActorType == "" {
 		e.ActorType = "user"
+	}
+	switch e.Action {
+	case "auth.login", "platform.login":
+		metrics.Logins.WithLabelValues("ok").Inc()
+	case "auth.login_failed", "platform.login_failed", "platform.mfa_failed":
+		metrics.Logins.WithLabelValues("failed").Inc()
 	}
 	meta, _ := json.Marshal(e.Meta)
 	if e.Meta == nil {

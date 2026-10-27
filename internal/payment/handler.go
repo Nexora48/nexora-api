@@ -11,6 +11,7 @@ import (
 
 	"github.com/Nexora48/nexora-api/internal/platform/authctx"
 	"github.com/Nexora48/nexora-api/internal/platform/httpx"
+	"github.com/Nexora48/nexora-api/internal/platform/metrics"
 )
 
 type Handler struct {
@@ -142,9 +143,11 @@ func (h *Handler) Razorpay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.Webhook(r.Context(), soc, body, r.Header); err != nil {
+		metrics.Webhooks.WithLabelValues("rejected").Inc()
 		httpx.Fail(w, err)
 		return
 	}
+	metrics.Webhooks.WithLabelValues("accepted").Inc()
 	httpx.OK(w, map[string]bool{"ok": true}, nil)
 }
 

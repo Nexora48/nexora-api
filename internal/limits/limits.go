@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Nexora48/nexora-api/internal/platform/httpx"
+	"github.com/Nexora48/nexora-api/internal/platform/metrics"
 )
 
 const (
@@ -76,6 +77,7 @@ func New(pool *pgxpool.Pool) *Checker { return &Checker{pool: pool} }
 
 // Err is the PLAN_LIMIT error.
 func Err(key string, used, max int64) *httpx.AppError {
+	metrics.PlanLimit.Inc()
 	return httpx.NewError(http.StatusUnprocessableEntity, "PLAN_LIMIT",
 		fmt.Sprintf("Plan limit reached: %d of %d (%s). Contact Nexora to upgrade your plan.", used, max, name(key)))
 }

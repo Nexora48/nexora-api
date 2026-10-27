@@ -170,7 +170,8 @@ func itoa(n int) string { return strconv.Itoa(n) }
 func (s *Service) Get(ctx context.Context, societyID, membershipID uuid.UUID) (*Detail, error) {
 	var d Detail
 	var role string
-	err := s.pool.QueryRow(ctx, `
+	// Unscoped: the user_shared flag looks at the same person's memberships in other societies; the row itself is still filtered by society_id
+	err := s.pool.QueryRow(database.Unscoped(ctx), `
 		SELECT m.id, u.id, u.full_name, u.phone, u.email, m.unit_id, un.number, b.code, m.role_key, `+statusExpr+`,
 		       to_char(m.move_in_date,'YYYY-MM-DD'), m.created_at,
 		       to_char(m.agreement_end_date,'YYYY-MM-DD'), to_char(u.date_of_birth,'YYYY-MM-DD'), u.gov_id_type, u.gov_id_last4,

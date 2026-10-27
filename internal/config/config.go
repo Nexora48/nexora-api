@@ -49,6 +49,21 @@ type Config struct {
 	PaymentFake        bool   // use the test gateway when a society has none configured
 	ComplaintReopen    time.Duration
 	AttachmentMaxMB    int
+
+	// Hardening (M11)
+	TrustProxy     bool          // honour X-Forwarded-For / X-Real-IP (only behind a proxy you control)
+	MaxBodyMB      int           // hard ceiling for any request body
+	SlowRequest    time.Duration // requests slower than this are logged as warnings
+	RateIPPerMin   int           // per-IP requests per minute (0 = off)
+	RateUserPerMin int           // per-user requests per minute (0 = off)
+	MetricsToken   string        // bearer token for /metrics (empty = only loopback may scrape)
+	SentryDSN      string
+	SMTPHost       string
+	SMTPPort       int
+	SMTPUser       string
+	SMTPPass       string
+	MailFrom       string
+	RLS            bool // set app.society_id on tenant connections and run with row-level security
 }
 
 // IsDev enables dev-only behaviour (fixed OTP, console SMS, seed data).
@@ -96,6 +111,27 @@ func Load() (Config, error) {
 	if v, err := strconv.Atoi(os.Getenv("ATTACHMENT_MAX_MB")); err == nil && v > 0 {
 		cfg.AttachmentMaxMB = v
 	}
+	cfg.TrustProxy = getBool("TRUST_PROXY", false)
+	cfg.MaxBodyMB, cfg.SlowRequest = 16, time.Second
+	if v, err := strconv.Atoi(os.Getenv("MAX_BODY_MB")); err == nil && v > 0 {
+		cfg.MaxBodyMB = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("SLOW_REQUEST_MS")); err == nil && v > 0 {
+		cfg.SlowRequest = time.Duration(v) * time.Millisecond
+	}
+	cfg.RateIPPerMin, cfg.RateUserPerMin = 600, 900
+	if v, err := strconv.Atoi(os.Getenv("RATE_IP_PER_MIN")); err == nil && v >= 0 {
+		cfg.RateIPPerMin = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("RATE_USER_PER_MIN")); err == nil && v >= 0 {
+		cfg.RateUserPerMin = v
+	}
+	cfg.MetricsToken = os.Getenv("METRICS_TOKEN")
+	cfg.SentryDSN = os.Getenv("SENTRY_DSN")
+	cfg.SMTPHost, cfg.SMTPUser, cfg.SMTPPass = os.Getenv("SMTP_HOST"), os.Getenv("SMTP_USER"), os.Getenv("SMTP_PASS")
+	cfg.SMTPPort, _ = strconv.Atoi(get("SMTP_PORT", "587"))
+	cfg.MailFrom = get("MAIL_FROM", "Nexora <no-reply@nexora.local>")
+	cfg.RLS = getBool("DB_RLS", false)
 	cfg.AmenityReminder = time.Hour
 	if v, err := strconv.Atoi(os.Getenv("AMENITY_REMINDER_MIN")); err == nil && v > 0 {
 		cfg.AmenityReminder = time.Duration(v) * time.Minute
@@ -156,4 +192,50 @@ func getBool(key string, def bool) bool {
 		}
 	}
 	return def
+}
+
+// Validate refuses unsafe settings outside dev/test: default secrets, fake payments, wildcard CORS and so on.
+// It is called by the API process at start-up (tests build Config values directly).
+func (c Config) Validate() error {
+	if c.IsDev() {
+		return nil
+	}
+	var bad []string
+	add := func(s string) { bad = append(bad, s) }
+	if strings.Contains(c.JWTSecret, "change-me") || strings.Contains(c.JWTSecret, "dev-") {
+		add("JWT_SECRET looks like a development value")
+	}
+	if strings.HasPrefix(c.PlatformJWTSecret, "dev-") || strings.HasPrefix(c.PlatformEncKey, "dev-") {
+		add("PLATFORM_JWT_SECRET / PLATFORM_ENC_KEY look like development values")
+	}
+	if c.JWTSecret == c.PlatformJWTSecret {
+		add("JWT_SECRET and PLATFORM_JWT_SECRET must differ")
+	}
+	if c.PaymentFake {
+		add("the fake payment gateway is on (unset PAYMENT_PROVIDER=fake)")
+	}
+	if len(c.CORSOrigins) == 0 {
+		add("CORS_ORIGINS is empty")
+	}
+	for _, o := range c.CORSOrigins {
+		if strings.TrimSpace(o) == "*" {
+			add("CORS_ORIGINS must not contain *")
+		}
+	}
+	if strings.Contains(c.DatabaseURL, "nexora:nexora@") {
+		add("DATABASE_URL uses the default password")
+	}
+	if strings.Contains(c.DatabaseURL, "sslmode=disable") && !strings.Contains(c.DatabaseURL, "localhost") && !strings.Contains(c.DatabaseURL, "127.0.0.1") {
+		add("DATABASE_URL has sslmode=disable for a remote database")
+	}
+	if !strings.HasPrefix(c.PublicBaseURL, "https://") {
+		add("PUBLIC_BASE_URL must be an https:// address")
+	}
+	if c.RateIPPerMin == 0 {
+		add("RATE_IP_PER_MIN=0 switches the per-IP limit off")
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unsafe configuration for APP_ENV=%s:\n - %s", c.Env, strings.Join(bad, "\n - "))
 }

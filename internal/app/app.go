@@ -9,6 +9,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/helper"
 	"github.com/Nexora48/nexora-api/internal/limits"
 	"github.com/Nexora48/nexora-api/internal/payment"
+	"github.com/Nexora48/nexora-api/internal/platform/metrics"
 	"github.com/Nexora48/nexora-api/internal/usage"
 	"log/slog"
 	"net/http"
@@ -59,7 +60,7 @@ type Deps struct {
 }
 
 // APIVersion is reported on the SuperAdmin health page.
-const APIVersion = "1.1.0"
+const APIVersion = "1.2.0"
 
 // App exposes the router plus the middleware factory modules use to guard routes.
 type App struct {
@@ -199,8 +200,20 @@ func New(d Deps) *App {
 	wsH := realtime.NewHandler(hub, tokens, d.Pool, d.Cfg.CORSOrigins)
 	need := func(perm string) func(http.Handler) http.Handler { return middleware.RequirePermission(rb, perm) }
 
+	var userLimit func(http.Handler) http.Handler
+	if d.Cfg.RateUserPerMin > 0 {
+		userLimit = middleware.UserRateLimit(d.Redis, "user", d.Cfg.RateUserPerMin, time.Minute)
+	}
+	heavy := func(next http.Handler) http.Handler { return next } // exports, receipts, reports, bulk and import
+	if d.Cfg.RateUserPerMin > 0 {
+		heavy = middleware.UserRateLimit(d.Redis, "heavy", 20, time.Minute)
+	}
+
 	protect := func(perm, featureKey string) chi.Middlewares {
 		chain := chi.Middlewares{middleware.Auth(tokens), middleware.Tenant(societies), middleware.RequirePasswordChanged}
+		if userLimit != nil {
+			chain = append(chain, userLimit)
+		}
 		if perm != "" {
 			chain = append(chain, middleware.RequirePermission(rb, perm))
 		}
@@ -226,13 +239,25 @@ func New(d Deps) *App {
 	}
 
 	r := chi.NewRouter()
-	r.Use(chimw.RequestID, chimw.RealIP, middleware.Recoverer(d.Log), middleware.Logger(d.Log))
+	r.Use(chimw.RequestID)
+	if d.Cfg.TrustProxy {
+		r.Use(chimw.RealIP) // only behind a proxy we control: the header is otherwise spoofable
+	}
+	mx := metrics.New(d.Pool, hub.Count)
+	r.Use(middleware.Recoverer(d.Log), mx.Middleware, middleware.Logger(d.Log, d.Cfg.SlowRequest), middleware.SecurityHeaders)
+	if d.Cfg.MaxBodyMB > 0 {
+		r.Use(middleware.BodyCeiling(int64(d.Cfg.MaxBodyMB) << 20))
+	}
+	if d.Cfg.RateIPPerMin > 0 {
+		r.Use(middleware.GlobalIPLimit(d.Redis, d.Cfg.RateIPPerMin))
+	}
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: d.Cfg.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"Authorization", "Content-Type", "Idempotency-Key"},
 		MaxAge:         300,
 	}))
+	r.Handle("/metrics", mx.Handler(d.Cfg.MetricsToken))
 	r.Get("/health", hl.Live)
 	r.Get("/ready", hl.Ready)
 	r.Get("/pay/{id}", payH.Checkout)
@@ -247,9 +272,9 @@ func New(d Deps) *App {
 		}
 
 		r.Route("/auth", func(r chi.Router) {
-			r.With(middleware.RateLimit(d.Redis, "otp", 20, time.Hour)).Post("/otp/request", authH.RequestOTP)
-			r.With(middleware.RateLimit(d.Redis, "verify", 60, 10*time.Minute)).Post("/otp/verify", authH.VerifyOTP)
-			r.With(middleware.RateLimit(d.Redis, "login", 60, 10*time.Minute)).Post("/login", authH.PasswordLogin)
+			r.With(middleware.RateLimitStrict(d.Redis, "otp", 20, time.Hour)).Post("/otp/request", authH.RequestOTP)
+			r.With(middleware.RateLimitStrict(d.Redis, "verify", 60, 10*time.Minute)).Post("/otp/verify", authH.VerifyOTP)
+			r.With(middleware.RateLimitStrict(d.Redis, "login", 60, 10*time.Minute)).Post("/login", authH.PasswordLogin)
 			r.Post("/select-society", authH.SelectSociety)
 			r.Post("/refresh", authH.Refresh)
 			r.With(middleware.Auth(tokens)).Post("/change-password", authH.ChangePassword)
@@ -259,6 +284,9 @@ func New(d Deps) *App {
 		r.Route("/me", func(r chi.Router) {
 			// read-only identity calls stay available while a temporary password is pending
 			r.Use(middleware.Auth(tokens), middleware.Tenant(societies))
+			if userLimit != nil {
+				r.Use(userLimit)
+			}
 			r.Get("/", meH.Me)
 			r.Get("/features", meH.Features)
 
@@ -397,7 +425,7 @@ func New(d Deps) *App {
 			r.Use(protect("", "payments")...)
 			r.With(need("bill.read")).Get("/", billH.Payments)
 			r.With(need("bill.read")).Get("/{id}/receipt", billH.Receipt())
-			r.With(need("bill.read")).Get("/{id}/receipt.pdf", billH.ReceiptPDF())
+			r.With(need("bill.read"), heavy).Get("/{id}/receipt.pdf", billH.ReceiptPDF())
 			r.With(need("payment.pay")).Post("/orders", payH.CreateOrder)
 			r.With(need("payment.pay")).Get("/orders/{id}", payH.Order)
 		})
@@ -447,7 +475,7 @@ func New(d Deps) *App {
 				r.Use(protect("complaint.manage", "complaints")...)
 				r.Get("/complaints", complaintH.AdminList)
 				r.Get("/complaints/stats", complaintH.Stats)
-				r.Get("/complaints/export", complaintH.Export)
+				r.With(heavy).Get("/complaints/export", complaintH.Export)
 				r.Get("/complaints/{id}", complaintH.AdminGet())
 				r.Get("/complaints/{id}/attachments/{aid}", complaintH.AdminAttachment)
 				r.Post("/complaints/{id}/assign", complaintH.Assign)
@@ -470,7 +498,7 @@ func New(d Deps) *App {
 				r.Get("/amenities/{id}/photos/{aid}", amenityH.Photo)
 				r.Delete("/amenities/{id}/photos/{aid}", amenityH.RemovePhoto)
 				r.Get("/bookings", amenityH.AdminBookings)
-				r.Get("/bookings/export", amenityH.Export)
+				r.With(heavy).Get("/bookings/export", amenityH.Export)
 				r.Post("/bookings/{id}/approve", amenityH.Approve())
 				r.Post("/bookings/{id}/reject", amenityH.Reject())
 				r.Post("/bookings/{id}/cancel", amenityH.OfficeCancel())
@@ -501,7 +529,7 @@ func New(d Deps) *App {
 			r.Group(func(r chi.Router) { // attendance sheets (admin + committee)
 				r.Use(protect("attendance.read", "staff_attendance")...)
 				r.Get("/attendance", attendH.Sheet)
-				r.Get("/attendance/export", attendH.Export)
+				r.With(heavy).Get("/attendance/export", attendH.Export)
 				r.Get("/attendance/{type}/{id}", attendH.Log)
 			})
 			r.Group(func(r chi.Router) { // billing: reads (admin + committee)
@@ -509,15 +537,15 @@ func New(d Deps) *App {
 				r.Get("/billing/settings", billH.GetSettings)
 				r.Get("/billing/heads", billH.Heads)
 				r.Get("/invoices", billH.AdminInvoices)
-				r.Get("/invoices/export", billH.ExportInvoices)
+				r.With(heavy).Get("/invoices/export", billH.ExportInvoices)
 				r.Get("/invoices/{id}", billH.AdminInvoice)
 				r.Get("/payments", billH.AdminPayments)
 				r.Get("/payments/{id}/receipt", billH.OfficeReceipt())
-				r.Get("/payments/{id}/receipt.pdf", billH.OfficeReceiptPDF())
-				r.Get("/billing/dues", billH.Dues)
-				r.Get("/billing/defaulters/export", billH.ExportDefaulters)
+				r.With(heavy).Get("/payments/{id}/receipt.pdf", billH.OfficeReceiptPDF())
+				r.With(heavy).Get("/billing/dues", billH.Dues)
+				r.With(heavy).Get("/billing/defaulters/export", billH.ExportDefaulters)
 				r.Get("/billing/ledger/{id}", billH.FlatLedger)
-				r.Get("/billing/reports/collection", billH.Collection)
+				r.With(heavy).Get("/billing/reports/collection", billH.Collection)
 			})
 			r.Group(func(r chi.Router) { // billing: changes (admin)
 				r.Use(protect("bill.manage", "payments")...)
@@ -545,12 +573,12 @@ func New(d Deps) *App {
 				r.Put("/polls/{id}", pollH.Update)
 				r.Delete("/polls/{id}", pollH.Archive)
 				r.Post("/polls/{id}/close", pollH.Close())
-				r.Get("/polls/{id}/export", pollH.Export)
+				r.With(heavy).Get("/polls/{id}/export", pollH.Export)
 			})
 			r.Group(func(r chi.Router) { // SOS log (the service limits it to the office roles)
 				r.Use(protect("sos.respond", "sos")...)
 				r.Get("/sos", sosH.AdminList)
-				r.Get("/sos/export", sosH.AdminExport)
+				r.With(heavy).Get("/sos/export", sosH.AdminExport)
 				r.Get("/sos/{id}", sosH.AdminGet())
 			})
 			r.Group(func(r chi.Router) { // emergency contacts
@@ -576,7 +604,7 @@ func New(d Deps) *App {
 				r.Use(protect("visitor.admin", "visitors")...)
 				r.Get("/visitors", visitorH.AdminList)
 				r.Get("/visitors/stats", visitorH.AdminStats)
-				r.Get("/visitors/export", visitorH.AdminExport)
+				r.With(heavy).Get("/visitors/export", visitorH.AdminExport)
 			})
 			r.Group(func(r chi.Router) { // read access (admin + committee)
 				r.Use(protect("resident.read", "")...)
@@ -593,7 +621,7 @@ func New(d Deps) *App {
 				r.Post("/blocks", societyH.CreateBlock)
 				r.Put("/blocks/{id}", societyH.UpdateBlock)
 				r.Delete("/blocks/{id}", societyH.DeleteBlock)
-				r.Post("/blocks/{id}/units/bulk", societyH.BulkUnits)
+				r.With(heavy).Post("/blocks/{id}/units/bulk", societyH.BulkUnits)
 				r.Post("/units", societyH.CreateUnit)
 				r.Put("/units/{id}", societyH.UpdateUnit)
 				r.Delete("/units/{id}", societyH.DeleteUnit)
@@ -605,7 +633,7 @@ func New(d Deps) *App {
 				r.Post("/residents/{id}/suspend", residentH.Suspend())
 				r.Post("/residents/{id}/restore", residentH.Restore())
 				r.Post("/residents/{id}/move-out", residentH.MoveOut())
-				r.Post("/residents/import", residentH.Import)
+				r.With(heavy).Post("/residents/import", residentH.Import)
 				r.Get("/residents/import/template", residentH.ImportTemplate)
 			})
 		})
