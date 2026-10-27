@@ -89,10 +89,12 @@ type Hub struct {
 	maxPerUser int
 	mu         sync.RWMutex
 	clients    map[*Client]struct{}
+	// maxPerSociety stops one society from holding every connection of the instance
+	maxPerSociety int
 }
 
 func NewHub(rdb *redis.Client) *Hub {
-	return &Hub{rdb: rdb, id: uuid.NewString(), maxPerUser: 3, clients: map[*Client]struct{}{}}
+	return &Hub{rdb: rdb, id: uuid.NewString(), maxPerUser: 3, maxPerSociety: 3000, clients: map[*Client]struct{}{}}
 }
 
 // Register adds a client, dropping the oldest connection of the same user beyond the cap.
@@ -124,6 +126,25 @@ func (h *Hub) Unregister(c *Client) {
 	delete(h.clients, c)
 	h.mu.Unlock()
 	c.close()
+}
+
+// SetMaxPerSociety limits live connections of one society on this instance (0 = unlimited).
+func (h *Hub) SetMaxPerSociety(n int) { h.mu.Lock(); h.maxPerSociety = n; h.mu.Unlock() }
+
+// Full reports whether a society already has as many live connections as allowed.
+func (h *Hub) Full(society uuid.UUID) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.maxPerSociety <= 0 {
+		return false
+	}
+	n := 0
+	for o := range h.clients {
+		if o.SocietyID == society {
+			n++
+		}
+	}
+	return n >= h.maxPerSociety
 }
 
 // Count is the number of connected clients (tests, metrics).

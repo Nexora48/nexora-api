@@ -76,6 +76,28 @@ func TestConnectionCapDropsOldest(t *testing.T) {
 	}
 }
 
+func TestSocietyConnectionCap(t *testing.T) {
+	h := NewHub(nil)
+	h.SetMaxPerSociety(3)
+	a, b := uuid.New(), uuid.New()
+	for i := 0; i < 3; i++ {
+		if h.Full(a) {
+			t.Fatalf("full too early at %d", i)
+		}
+		h.Register(NewClient(uuid.New(), a, nil, "resident_owner"))
+	}
+	if !h.Full(a) {
+		t.Fatal("a society at its cap must be refused")
+	}
+	if h.Full(b) {
+		t.Fatal("another society must not be affected")
+	}
+	h.SetMaxPerSociety(0)
+	if h.Full(a) {
+		t.Fatal("0 means unlimited")
+	}
+}
+
 func TestRevokeClosesTheUsersConnections(t *testing.T) {
 	h := NewHub(nil)
 	uid, soc := uuid.New(), uuid.New()

@@ -73,6 +73,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, httpx.NewError(http.StatusUnauthorized, "UNAUTHORIZED", "membership not available"))
 		return
 	}
+	if h.hub.Full(p.SocietyID) {
+		w.Header().Set("Retry-After", "30")
+		httpx.Fail(w, httpx.NewError(http.StatusServiceUnavailable, "WS_FULL", "too many live connections for this society, try again shortly"))
+		return
+	}
 	up := websocket.Upgrader{CheckOrigin: h.originOK, ReadBufferSize: 1024, WriteBufferSize: 4096}
 	conn, err := up.Upgrade(w, r, nil)
 	if err != nil {
