@@ -240,6 +240,11 @@ func (s *Service) ListFamily(ctx context.Context, p authctx.Principal) ([]reside
 
 func (s *Service) AddFamily(ctx context.Context, p authctx.Principal, in FamilyInput) (*resident.FamilyMember, error) {
 	if in.Phone != nil && strings.TrimSpace(*in.Phone) != "" {
+		release, err := s.limits.Guard(ctx, p.SocietyID, limits.MaxResidents)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 		if err := s.limits.Check(ctx, p.SocietyID, limits.MaxResidents, 1); err != nil {
 			return nil, err
 		}

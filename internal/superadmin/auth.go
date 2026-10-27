@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	nxmail "github.com/Nexora48/nexora-api/internal/mail"
 	"github.com/Nexora48/nexora-api/internal/notify"
 	"net/http"
 	"strings"
@@ -68,6 +69,9 @@ type Service struct {
 	notifier   *notify.Service
 	batch      int
 	version    string
+	backupFile string
+	mailer     nxmail.Sender
+	consoleURL string
 	hub        interface{ Count() int }
 }
 

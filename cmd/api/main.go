@@ -44,7 +44,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	pool, err := database.NewPostgres(ctx, cfg.DatabaseURL, database.Options{RLS: cfg.RLS})
+	pool, err := database.NewPostgres(ctx, cfg.DatabaseURL, database.Options{RLS: cfg.RLS, MaxConns: int32(cfg.DBMaxConns), SlowQuery: cfg.SlowQuery, Log: log})
 	if err != nil {
 		log.Error("postgres unavailable (run `make up` or set DATABASE_URL)", "err", err)
 		os.Exit(1)

@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/Nexora48/nexora-api/internal/platform/httpx"
 	"github.com/Nexora48/nexora-api/internal/platform/metrics"
@@ -71,9 +73,51 @@ func name(k string) string {
 	return k
 }
 
-type Checker struct{ pool *pgxpool.Pool }
+type Checker struct {
+	pool *pgxpool.Pool
+	rdb  *redis.Client
+}
 
 func New(pool *pgxpool.Pool) *Checker { return &Checker{pool: pool} }
+
+// SetRedis lets Guard serialise creations per society and limit across API instances.
+func (c *Checker) SetRedis(r *redis.Client) *Checker { c.rdb = r; return c }
+
+var errBusy = httpx.NewError(http.StatusServiceUnavailable, "BUSY", "another change to this society is in progress, please try again")
+
+// Guard takes a short lock for (society, limit) so that the "is there room?" check and the creation that follows
+// cannot interleave with another creation: twenty simultaneous requests at a limit of five create exactly five.
+// Call the returned function when the creation is done (or has failed). Without Redis, or on a nil Checker, it does nothing.
+func (c *Checker) Guard(ctx context.Context, society uuid.UUID, key string) (func(), error) {
+	if c == nil || c.rdb == nil || !isHard(key) {
+		return func() {}, nil
+	}
+	lock := "limit-lock:" + society.String() + ":" + key
+	token := uuid.NewString()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		ok, err := c.rdb.SetNX(ctx, lock, token, 10*time.Second).Result()
+		if err != nil {
+			return func() {}, nil // Redis unavailable: fall back to the unguarded check rather than refuse creations
+		}
+		if ok {
+			return func() {
+				// release only our own lock
+				_ = unlock.Run(context.WithoutCancel(ctx), c.rdb, []string{lock}, token).Err()
+			}, nil
+		}
+		if time.Now().After(deadline) {
+			return func() {}, errBusy
+		}
+		select {
+		case <-ctx.Done():
+			return func() {}, ctx.Err()
+		case <-time.After(15 * time.Millisecond):
+		}
+	}
+}
+
+var unlock = redis.NewScript(`if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0`)
 
 // Err is the PLAN_LIMIT error.
 func Err(key string, used, max int64) *httpx.AppError {

@@ -1,7 +1,9 @@
 openapi: 3.0.3
-info: { title: Nexora API, version: 1.1.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls + M8 amenity booking, daily help, staff attendance + M9 billing and payments (money in integer paise) + M10 plans and limits, usage analytics, audit v2, staff, broadcast, health, app versions. Success: {data, meta}. Error: {error:{code,message,details}}." }
+info: { title: Nexora API, version: 1.2.0, description: "M1 auth/tenancy/RBAC + M2 society setup + M3 SuperAdmin console + M4 visitors + M5 guard app (gates, shifts, realtime, photos, offline batch) + M6 notifications, SOS, delivery rules, emergency contacts + M7 notices, complaints, polls + M8 amenity booking, daily help, staff attendance + M9 billing and payments (money in integer paise) + M10 plans and limits, usage analytics, audit v2, staff, broadcast, health, app versions + M11 hardening: rate limits (429 RATE_LIMITED with Retry-After and X-RateLimit-* headers on every response), /metrics, row-level security, backups, health backups check. Success: {data, meta}. Error: {error:{code,message,details}}." }
 servers: [{ url: "http://localhost:8080" }]
 paths:
+  /metrics:
+    get: { summary: "Prometheus metrics. Needs the METRICS_TOKEN bearer token, or loopback when no token is set. Not under /api/v1.", responses: { "200": { description: "text/plain Prometheus exposition" }, "401": { description: bad token }, "403": { description: not loopback and no token configured } } }
   /health: { get: { summary: Liveness, responses: { "200": { description: OK } } } }
   /ready: { get: { summary: Readiness, responses: { "200": { description: Ready }, "503": { description: Dependency down } } } }
   /api/v1/auth/otp/request:
@@ -555,7 +557,7 @@ paths:
     put: { summary: "Platform: set retention {retention_days 30-3650}", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/staff:
     get: { summary: "Platform (super_admin): staff list", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
-    post: { summary: "Platform (super_admin): invite {email, full_name, role}; returns the one-time invite token", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Platform (super_admin): invite {email, full_name, role}; returns the one-time invite token and emailed=true when an invitation e-mail was handed to the mail server", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/staff/{id}:
     put: { summary: "Platform (super_admin): change role/status; not yourself, never the last super admin", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/staff/{id}/reinvite:
@@ -570,7 +572,7 @@ paths:
   /api/v1/superadmin/broadcasts/{id}/cancel:
     post: { summary: "Platform (super_admin): cancel before the first batch is sent", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/health:
-    get: { summary: "Platform: database, Redis, migrations, outbox, webhooks, live connections, job heartbeats", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    get: { summary: "Platform: version and commit, database, Redis, migrations, outbox, webhooks, backups (age of the last good backup), live connections, job heartbeats", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/app-versions:
     get: { summary: "Platform: minimum and latest version per app", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/app-versions/{app}:

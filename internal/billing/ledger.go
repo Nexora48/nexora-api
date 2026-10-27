@@ -310,12 +310,13 @@ func (s *Service) Adjust(ctx context.Context, p authctx.Principal, unit uuid.UUI
 		_, err := s.AdHoc(ctx, p, unit, reason, amount, "", "Adjustment")
 		return err
 	case "credit":
+		today := s.today(ctx, p.SocietyID) // before the transaction starts: a second connection while one is held can deadlock the pool
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck
-		pid, _, err := s.CreatePaymentTx(ctx, tx, PaymentIn{Society: p.SocietyID, Unit: unit, AmountPaise: amount, Mode: "waiver", PaidOn: s.today(ctx, p.SocietyID), ReceivedBy: &p.MembershipID, Note: reason, Reason: "Credit: " + reason})
+		pid, _, err := s.CreatePaymentTx(ctx, tx, PaymentIn{Society: p.SocietyID, Unit: unit, AmountPaise: amount, Mode: "waiver", PaidOn: today, ReceivedBy: &p.MembershipID, Note: reason, Reason: "Credit: " + reason})
 		if err != nil {
 			return err
 		}

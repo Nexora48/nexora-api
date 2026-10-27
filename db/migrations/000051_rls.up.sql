@@ -1,7 +1,10 @@
 -- Row-level security as a second lock behind the society_id filters in the services.
--- It only bites when a connection runs as the role nexora_app (DB_RLS=true: the API does SET ROLE nexora_app
--- and sets app.society_id from the signed-in user's token). Code without a signed-in user (sign-in, sweepers,
--- webhooks, the SuperAdmin console) runs with app.bypass = 'on'. With the role set and nothing else, no row is visible.
+-- It bites only on connections that run as the role nexora_app (DB_RLS=true): the API then does
+-- SET ROLE nexora_app and sets app.society_id from the signed-in user's token before each use. Code without a
+-- signed-in user (sign-in, sweepers, webhooks, the SuperAdmin console) stays on the login role, which owns the
+-- tables and is therefore not subject to the policies (the tables are NOT forced). With the role set and no
+-- society set, no row is visible (fails closed). Policies are a plain equality, so the society_id indexes are used.
+-- The API's login role must be the table owner (the role that runs the migrations) or have BYPASSRLS.
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexora_app') THEN
@@ -21,8 +24,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ne
 
 CREATE FUNCTION app_society() RETURNS uuid LANGUAGE sql STABLE AS
   $$ SELECT nullif(current_setting('app.society_id', true), '')::uuid $$;
-CREATE FUNCTION app_bypass() RETURNS boolean LANGUAGE sql STABLE AS
-  $$ SELECT coalesce(current_setting('app.bypass', true), '') = 'on' $$;
 
 -- 1. every table with a society_id: own rows only
 DO $$
@@ -35,26 +36,22 @@ BEGIN
       AND c.table_name NOT IN ('platform_invoices', 'platform_broadcast_targets', 'usage_daily', 'usage_active_users')
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
-    EXECUTE format('CREATE POLICY tenant_isolation ON %I USING (society_id = (SELECT app_society()) OR (SELECT app_bypass())) WITH CHECK (society_id = (SELECT app_society()) OR (SELECT app_bypass()))', t);
+    EXECUTE format('CREATE POLICY tenant_isolation ON %I USING (society_id = (SELECT app_society())) WITH CHECK (society_id = (SELECT app_society()))', t);
   END LOOP;
 END $$;
 
--- 2. platform-only tables that happen to carry a society_id: tenants see nothing
+-- 2. platform-only tables that happen to carry a society_id: row security on and no policy = tenants see nothing
 DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['platform_invoices', 'platform_broadcast_targets', 'usage_daily', 'usage_active_users'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
-    EXECUTE format('CREATE POLICY platform_only ON %I USING ((SELECT app_bypass())) WITH CHECK ((SELECT app_bypass()))', t);
   END LOOP;
 END $$;
 
 -- 3. the societies table itself: a tenant sees its own row
 ALTER TABLE societies ENABLE ROW LEVEL SECURITY;
-ALTER TABLE societies FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON societies USING (id = (SELECT app_society()) OR (SELECT app_bypass())) WITH CHECK (id = (SELECT app_society()) OR (SELECT app_bypass()));
+CREATE POLICY tenant_isolation ON societies USING (id = (SELECT app_society())) WITH CHECK (id = (SELECT app_society()));
 
 -- 4. child tables without a society_id follow their parent (the parent's own policy filters the lookup)
 DO $$
@@ -76,8 +73,7 @@ BEGIN
     ('poll_votes', 'poll_id', 'polls')
   ) AS v(child, fk, parent) LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', r.child);
-    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', r.child);
-    EXECUTE format('CREATE POLICY via_parent ON %I USING ((SELECT app_bypass()) OR EXISTS (SELECT 1 FROM %I p WHERE p.id = %I.%I)) WITH CHECK ((SELECT app_bypass()) OR EXISTS (SELECT 1 FROM %I p WHERE p.id = %I.%I))',
+    EXECUTE format('CREATE POLICY via_parent ON %I USING (EXISTS (SELECT 1 FROM %I p WHERE p.id = %I.%I)) WITH CHECK (EXISTS (SELECT 1 FROM %I p WHERE p.id = %I.%I))',
       r.child, r.parent, r.child, r.fk, r.parent, r.child, r.fk);
   END LOOP;
 END $$;

@@ -1,0 +1,54 @@
+# Prometheus + Alertmanager + Grafana (+ Postgres and Redis exporters) for the Nexora API.
+#
+#   docker compose -f deployments/docker-compose.yml -f deployments/monitoring/docker-compose.monitoring.yml --profile monitoring up -d
+#
+# Grafana: http://localhost:3000 (admin / the GRAFANA_PASSWORD you set, default "admin" on first run only locally)
+# Prometheus: http://localhost:9090   Alertmanager: http://localhost:9093
+# The API must be reachable as nexora-api:8080 from these containers (see deployments/docker-compose.yml) or
+# change targets in prometheus.yml. Put METRICS_TOKEN into ./prometheus/api-token (one line, no newline).
+services:
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v2.55.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./monitoring/api-token:/etc/prometheus/api-token:ro
+      - prom-data:/prometheus
+    ports: ["9090:9090"]
+
+  alertmanager:
+    profiles: ["monitoring"]
+    image: prom/alertmanager:v0.27.0
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports: ["9093:9093"]
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["3000:3000"]
+
+  postgres-exporter:
+    profiles: ["monitoring"]
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: ${EXPORTER_DATABASE_URL:-postgresql://nexora:nexora@postgres:5432/nexora?sslmode=disable}
+
+  redis-exporter:
+    profiles: ["monitoring"]
+    image: oliver006/redis_exporter:v1.66.0
+    environment:
+      REDIS_ADDR: ${EXPORTER_REDIS_ADDR:-redis://redis:6379}
+
+volumes:
+  prom-data: {}
+  grafana-data: {}

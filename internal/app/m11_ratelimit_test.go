@@ -3,6 +3,7 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,12 @@ func limited(t *testing.T, ipPerMin, userPerMin int) (*httptest.Server, *minired
 // instance builds another API on the shared database with its own Redis and a log writer.
 func instance(t *testing.T, logw io.Writer, tweak func(*config.Config)) (*httptest.Server, *miniredis.Miniredis) {
 	t.Helper()
+	return instanceWith(t, logw, tweak, nil)
+}
+
+// instanceWith also lets a test adjust the dependencies (for example the mailer).
+func instanceWith(t *testing.T, logw io.Writer, tweak func(*config.Config), deps func(*app.Deps)) (*httptest.Server, *miniredis.Miniredis) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("integration test (needs embedded Postgres)")
 	}
@@ -41,7 +48,11 @@ func instance(t *testing.T, logw io.Writer, tweak func(*config.Config)) (*httpte
 		tweak(&cfg)
 	}
 	rdb := redis.NewClient(&redis.Options{Addr: mr2.Addr()})
-	a := app.New(app.Deps{Cfg: cfg, Log: slog.New(slog.NewTextHandler(logw, nil)), Pool: pool, Redis: rdb, SMS: &sms.Recorder{}})
+	d := app.Deps{Cfg: cfg, Log: slog.New(slog.NewTextHandler(logw, nil)), Pool: pool, Redis: rdb, SMS: &sms.Recorder{}}
+	if deps != nil {
+		deps(&d)
+	}
+	a := app.New(d)
 	srv2 := httptest.NewServer(a.Router)
 	t.Cleanup(srv2.Close)
 	return srv2, mr2
@@ -138,3 +149,26 @@ func TestBodyCeilingAppliesToTheWholeAPI(t *testing.T) {
 
 func stringsReader(s string) io.Reader { return bytes.NewReader([]byte(s)) }
 func bytesReader(b []byte) io.Reader   { return bytes.NewReader(b) }
+
+// sa2 calls the SuperAdmin API of another instance.
+func sa2(t *testing.T, base, method, path, tok string, body any) resp {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, base+saBase+path, rd)
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var m map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&m)
+	return resp{res.StatusCode, m}
+}

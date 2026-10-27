@@ -8,6 +8,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/billing"
 	"github.com/Nexora48/nexora-api/internal/helper"
 	"github.com/Nexora48/nexora-api/internal/limits"
+	"github.com/Nexora48/nexora-api/internal/mail"
 	"github.com/Nexora48/nexora-api/internal/payment"
 	"github.com/Nexora48/nexora-api/internal/platform/metrics"
 	"github.com/Nexora48/nexora-api/internal/usage"
@@ -57,6 +58,8 @@ type Deps struct {
 	SMS   sms.Sender
 	// Push overrides the push sender (tests); nil selects FCM when configured, else the log sender.
 	Push notify.Sender
+	// Mailer overrides the e-mail sender (tests); nil selects SMTP when configured, the console in dev, else none.
+	Mailer mail.Sender
 }
 
 // APIVersion is reported on the SuperAdmin health page.
@@ -110,7 +113,7 @@ func New(d Deps) *App {
 	tokens := auth.NewTokenManager(d.Cfg.JWTSecret, d.Cfg.AccessTTL)
 	users := user.NewRepository(d.Pool)
 	societies := society.NewRepository(d.Pool)
-	planLimits := limits.New(d.Pool)
+	planLimits := limits.New(d.Pool).SetRedis(d.Redis)
 	usageSvc := usage.New(d.Pool)
 	societies.SetLimits(planLimits)
 	rb := rbac.New(d.Pool)
@@ -236,6 +239,12 @@ func New(d Deps) *App {
 		saSvc.SetNotifier(noteSvc)
 		saSvc.SetHub(hub)
 		saSvc.SetBuild(APIVersion)
+		saSvc.SetBackupFile(d.Cfg.BackupHeartbeatFile)
+		if m := d.Mailer; m != nil {
+			saSvc.SetMailer(m, d.Cfg.ConsoleURL)
+		} else if m := mail.New(d.Cfg.SMTPHost, d.Cfg.SMTPPort, d.Cfg.SMTPUser, d.Cfg.SMTPPass, d.Cfg.MailFrom, d.Cfg.IsDev(), d.Log); m != nil {
+			saSvc.SetMailer(m, d.Cfg.ConsoleURL)
+		}
 	}
 
 	r := chi.NewRouter()
@@ -243,6 +252,7 @@ func New(d Deps) *App {
 	if d.Cfg.TrustProxy {
 		r.Use(chimw.RealIP) // only behind a proxy we control: the header is otherwise spoofable
 	}
+	metrics.BackupFile = d.Cfg.BackupHeartbeatFile
 	mx := metrics.New(d.Pool, hub.Count)
 	r.Use(middleware.Recoverer(d.Log), mx.Middleware, middleware.Logger(d.Log, d.Cfg.SlowRequest), middleware.SecurityHeaders)
 	if d.Cfg.MaxBodyMB > 0 {

@@ -512,7 +512,8 @@ func (s *Service) Void(ctx context.Context, p authctx.Principal, id uuid.UUID, r
 // ── reads ────────────────────────────────────────────────────────────────────
 
 func (s *Service) Invoice(ctx context.Context, soc, id uuid.UUID) (*Invoice, error) {
-	v, err := s.scanInvoice(s.pool.QueryRow(ctx, `SELECT `+invoiceCols+invoiceFrom+`WHERE i.id=$1 AND i.society_id=$2`, id, soc), s.today(ctx, soc))
+	today := s.today(ctx, soc) // evaluated before the row query: a second connection while one is held can deadlock the pool
+	v, err := s.scanInvoice(s.pool.QueryRow(ctx, `SELECT `+invoiceCols+invoiceFrom+`WHERE i.id=$1 AND i.society_id=$2`, id, soc), today)
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -566,12 +567,12 @@ func (s *Service) MyBills(ctx context.Context, p authctx.Principal, group string
 
 func (s *Service) list(ctx context.Context, soc uuid.UUID, where string, args []any, order string, limit, offset int) ([]*Invoice, int, error) {
 	all := append([]any{soc}, args...)
+	today := s.today(ctx, soc) // before the query: asking for a second connection while rows are open can deadlock the pool
 	rows, err := s.pool.Query(ctx, `SELECT `+invoiceCols+`, count(*) OVER() `+invoiceFrom+`WHERE i.society_id=$1 AND `+where+
 		fmt.Sprintf(` ORDER BY %s LIMIT $%d OFFSET $%d`, order, len(all)+1, len(all)+2), append(all, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
-	today := s.today(ctx, soc)
 	var out []*Invoice
 	total := 0
 	for rows.Next() {

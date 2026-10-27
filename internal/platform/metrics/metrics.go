@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,9 @@ type Metrics struct {
 	inflight prometheus.Gauge
 }
 
+// BackupFile is the heartbeat file scripts/backup.sh touches (BACKUP_HEARTBEAT_FILE); empty = not reported.
+var BackupFile string
+
 // Counters incremented from other packages (registered on every Metrics instance).
 var (
 	RateLimited = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "nexora_rate_limited_total", Help: "Requests refused by a rate limiter."}, []string{"limiter"})
@@ -45,6 +49,16 @@ func New(pool *pgxpool.Pool, conns func() int) *Metrics {
 	m.inflight = prometheus.NewGauge(prometheus.GaugeOpts{Name: "nexora_http_in_flight_requests", Help: "Requests being served right now."})
 	m.reg.MustRegister(m.requests, m.latency, m.inflight, RateLimited, PlanLimit, Logins, Webhooks,
 		prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	// children that should exist from the first scrape, so rate() and absent() behave
+	for _, l := range []string{"ip", "user", "heavy", "otp", "verify", "login", "app-config"} {
+		RateLimited.WithLabelValues(l)
+	}
+	for _, r := range []string{"ok", "failed"} {
+		Logins.WithLabelValues(r)
+	}
+	for _, o := range []string{"accepted", "rejected"} {
+		Webhooks.WithLabelValues(o)
+	}
 	if pool != nil {
 		m.reg.MustRegister(&dbCollector{pool: pool, conns: conns})
 	}
@@ -113,10 +127,11 @@ var (
 	descHooks   = prometheus.NewDesc("nexora_payment_events_stuck", "Payment events unprocessed for over 5 minutes.", nil, nil)
 	descJobAge  = prometheus.NewDesc("nexora_job_last_run_age_seconds", "Seconds since a background job last ran.", []string{"job"}, nil)
 	descVersion = prometheus.NewDesc("nexora_up", "1 while the API is serving.", nil, nil)
+	descBackup  = prometheus.NewDesc("nexora_backup_age_seconds", "Seconds since the last good backup (absent when not configured).", nil, nil)
 )
 
 func (c *dbCollector) Describe(ch chan<- *prometheus.Desc) {
-	for _, d := range []*prometheus.Desc{descPool, descWS, descOutbox, descOutOld, descFailed, descHooks, descJobAge, descVersion} {
+	for _, d := range []*prometheus.Desc{descPool, descWS, descOutbox, descOutOld, descFailed, descHooks, descJobAge, descVersion, descBackup} {
 		ch <- d
 	}
 }
@@ -152,6 +167,13 @@ func (c *dbCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(descFailed, prometheus.GaugeValue, c.counts.failed)
 	ch <- prometheus.MustNewConstMetric(descHooks, prometheus.GaugeValue, c.counts.stuckHooks)
 	c.mu.Unlock()
+	if BackupFile != "" {
+		if b, err := os.ReadFile(BackupFile); err == nil {
+			if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+				ch <- prometheus.MustNewConstMetric(descBackup, prometheus.GaugeValue, time.Since(time.Unix(n, 0)).Seconds())
+			}
+		}
+	}
 	for _, j := range heartbeat.All() {
 		ch <- prometheus.MustNewConstMetric(descJobAge, prometheus.GaugeValue, time.Since(j.At).Seconds(), j.Name)
 	}

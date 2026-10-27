@@ -1,0 +1,27 @@
+# PostgreSQL with continuous WAL archiving, for point-in-time recovery (see docs/runbooks/backup-restore.md).
+#
+#   docker compose -f deployments/docker-compose.yml -f deployments/docker-compose.pitr.yml up -d postgres
+#
+# WAL segments are copied to the `walarchive` volume as they fill (archive_timeout forces one at least every 60 s,
+# so at most about a minute of changes is ever outside the archive). Take a base backup with scripts/pitr-base-backup.sh.
+# In production replace the archive_command with pgbackrest or wal-g pointing at S3-compatible storage; the recovery
+# steps in the runbook stay the same.
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=60
+      - -c
+      - archive_command=test ! -f /walarchive/%f && cp %p /walarchive/%f
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - walarchive:/walarchive
+      - basebackups:/basebackups
+volumes:
+  walarchive:
+  basebackups:

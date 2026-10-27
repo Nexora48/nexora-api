@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Nexora48/nexora-api/internal/auth"
+	nxmail "github.com/Nexora48/nexora-api/internal/mail"
 	"github.com/Nexora48/nexora-api/internal/platform/database"
 	"github.com/Nexora48/nexora-api/internal/platform/httpx"
 )
@@ -45,7 +47,41 @@ type StaffUser struct {
 
 type InviteResult struct {
 	User        *StaffUser `json:"user"`
-	InviteToken string     `json:"invite_token"` // shown once to the inviting super admin (no email delivery yet)
+	InviteToken string     `json:"invite_token"` // always shown once to the inviting super admin, in case the e-mail never arrives
+	Emailed     bool       `json:"emailed"`      // an invitation e-mail was handed to the mail server
+}
+
+// SetMailer turns on invitation e-mails; consoleURL is where the SuperAdmin web app lives (https://console.example.com).
+func (s *Service) SetMailer(m nxmail.Sender, consoleURL string) {
+	s.mailer, s.consoleURL = m, strings.TrimRight(consoleURL, "/")
+}
+
+func (s *Service) emailInvite(ctx context.Context, u *StaffUser, token string) bool {
+	if s.mailer == nil {
+		return false
+	}
+	link := s.consoleURL + "/#/accept-invite?token=" + token
+	if s.consoleURL == "" {
+		link = "(open the SuperAdmin console and choose \"I have an invitation\", then paste this code) " + token
+	}
+	body := "Hello " + u.FullName + ",\n\nYou have been invited to the Nexora console as " + u.RoleLabelText() + ".\n\nSet your password here (the link works once and expires in 72 hours):\n" + link +
+		"\n\nYou will set up an authenticator app when you first sign in.\n\nIf you were not expecting this, ignore this message.\n"
+	if err := s.mailer.Send(ctx, u.Email, "Your Nexora console invitation", body); err != nil {
+		slog.Warn("invitation e-mail failed", "err", err)
+		return false
+	}
+	if d, ok := s.mailer.(interface{ Delivers() bool }); ok && !d.Delivers() {
+		return false // the console sender only logs
+	}
+	return true
+}
+
+// RoleLabelText names the role for people.
+func (u *StaffUser) RoleLabelText() string {
+	if u.Role == RoleSuper {
+		return "a super admin"
+	}
+	return "support staff (read-only)"
 }
 
 const staffSelect = `SELECT id, email, full_name, role, status, totp_enabled, last_login_at, invite_token_hash IS NOT NULL, invite_expires_at, created_at FROM platform_users`
@@ -127,8 +163,9 @@ func (s *Service) InviteStaff(ctx context.Context, actor uuid.UUID, in InviteInp
 	if err != nil {
 		return nil, err
 	}
-	s.platformLog(ctx, actor, nil, "staff.invite", "platform_user", id.String(), map[string]any{"email": in.Email, "role": in.Role})
-	return &InviteResult{User: u, InviteToken: tok}, nil
+	emailed := s.emailInvite(ctx, u, tok)
+	s.platformLog(ctx, actor, nil, "staff.invite", "platform_user", id.String(), map[string]any{"email": in.Email, "role": in.Role, "emailed": emailed})
+	return &InviteResult{User: u, InviteToken: tok, Emailed: emailed}, nil
 }
 
 // ReinviteStaff issues a fresh token for a user who has not accepted yet.
@@ -150,7 +187,7 @@ func (s *Service) ReinviteStaff(ctx context.Context, actor, id uuid.UUID) (*Invi
 	}
 	s.platformLog(ctx, actor, nil, "staff.reinvite", "platform_user", id.String(), map[string]any{"email": u.Email})
 	u, _ = s.staffByID(ctx, id)
-	return &InviteResult{User: u, InviteToken: tok}, nil
+	return &InviteResult{User: u, InviteToken: tok, Emailed: s.emailInvite(ctx, u, tok)}, nil
 }
 
 // AcceptInvite sets the password (the authenticator is enrolled at the first sign-in). A token works once.

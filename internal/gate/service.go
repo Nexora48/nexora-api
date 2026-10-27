@@ -228,6 +228,11 @@ func (s *Service) guard(ctx context.Context, soc, id uuid.UUID) (*Guard, error) 
 }
 
 func (s *Service) CreateGuard(ctx context.Context, soc, actor uuid.UUID, fullName, phone string) (*Guard, error) {
+	release, err := s.limits.Guard(ctx, soc, limits.MaxGuards)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.limits.Check(ctx, soc, limits.MaxGuards, 1); err != nil {
 		return nil, err
 	}

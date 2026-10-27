@@ -454,7 +454,13 @@ func (s *Service) AddAdmin(ctx context.Context, actor, societyID uuid.UUID, in A
 	if !exists {
 		return nil, ErrSocietyNotFound
 	}
-	if err := limits.New(s.store.pool).Check(ctx, societyID, limits.MaxAdmins, 1); err != nil {
+	lc := limits.New(s.store.pool).SetRedis(s.rdb)
+	release, err := lc.Guard(ctx, societyID, limits.MaxAdmins)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := lc.Check(ctx, societyID, limits.MaxAdmins, 1); err != nil {
 		return nil, err
 	}
 	tx, err := s.store.pool.Begin(ctx)

@@ -399,6 +399,7 @@ func (s *Service) handle(ctx context.Context, soc uuid.UUID, provider string, ev
 	defer tx.Rollback(ctx) //nolint:errcheck
 	o, err := scanOrder(tx.QueryRow(ctx, `SELECT `+orderCols+` FROM payment_orders WHERE provider=$1 AND provider_order_id=$2 AND society_id=$3 FOR UPDATE`, provider, ev.ProviderOrderID, soc))
 	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx) // release the connection before done() asks the pool for another
 		done("unknown order")
 		return true, nil
 	}

@@ -1,0 +1,88 @@
+groups:
+  - name: nexora-api
+    rules:
+      - alert: ApiDown
+        expr: up{job="nexora-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "The API cannot be scraped", runbook: "docs/runbooks/api-down.md" }
+
+      - alert: ApiHighErrorRate
+        expr: sum(rate(nexora_http_requests_total{status=~"5.."}[5m])) / sum(rate(nexora_http_requests_total[5m])) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "More than 2% of requests fail with 5xx", runbook: "docs/runbooks/api-down.md" }
+
+      - alert: ApiSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(nexora_http_request_duration_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "p95 latency above one second", runbook: "docs/runbooks/db-connections.md" }
+
+      - alert: DatabasePoolSaturated
+        expr: nexora_db_pool_connections{state="busy"} / ignoring(state) nexora_db_pool_connections{state="max"} > 0.9
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Database pool over 90% busy", runbook: "docs/runbooks/db-connections.md" }
+
+      - alert: OutboxBacklog
+        expr: nexora_outbox_oldest_age_seconds > 900
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Push/SMS messages are waiting over 15 minutes", runbook: "docs/runbooks/outbox.md" }
+
+      - alert: OutboxFailures
+        expr: nexora_outbox_failed > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations: { summary: "Messages failed for good", runbook: "docs/runbooks/outbox.md" }
+
+      - alert: BackgroundJobStalled
+        expr: nexora_job_last_run_age_seconds{job!="audit-retention"} > 10800
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "A background job has not run for 3 hours", runbook: "docs/runbooks/api-down.md" }
+
+      - alert: PaymentWebhooksStuck
+        expr: nexora_payment_events_stuck > 0
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "Payment events are not being processed", runbook: "docs/runbooks/payments.md" }
+
+      - alert: RateLimitSurge
+        expr: sum(rate(nexora_rate_limited_total[5m])) > 5
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Many requests are being rate limited (abuse or a misconfigured client)", runbook: "docs/runbooks/api-down.md" }
+
+      - alert: LoginFailureSpike
+        expr: sum(rate(nexora_logins_total{result="failed"}[5m])) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Sustained failed sign-ins", runbook: "docs/runbooks/secrets.md" }
+
+      - alert: BackupStale
+        expr: nexora_backup_age_seconds > 93600
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "No good backup for over 26 hours", runbook: "docs/runbooks/backup-restore.md" }
+
+  - name: infrastructure
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "PostgreSQL is not reachable", runbook: "docs/runbooks/backup-restore.md" }
+
+      - alert: PostgresConnectionsNearLimit
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.85
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "PostgreSQL connections over 85% of max_connections", runbook: "docs/runbooks/db-connections.md" }
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "Redis is not reachable (sign-in refuses, rate limits fail open)", runbook: "docs/runbooks/redis.md" }

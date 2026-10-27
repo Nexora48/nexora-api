@@ -1,0 +1,22 @@
+# Alert delivery is a placeholder: alerts show in the Alertmanager UI and go to a local webhook that does nothing.
+# Replace `default` with email, Slack or any receiver you use (see https://prometheus.io/docs/alerting/latest/configuration/).
+route:
+  receiver: default
+  group_by: ["alertname"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [severity="critical"]
+      receiver: default
+      repeat_interval: 1h
+
+receivers:
+  - name: default
+    webhook_configs:
+      - url: http://localhost:9/alerts   # placeholder, nothing listens here
+        send_resolved: true
+  # - name: oncall-email
+  #   email_configs: [{ to: you@example.com, from: alerts@example.com, smarthost: smtp.example.com:587, auth_username: ..., auth_password: ... }]
+  # - name: oncall-slack
+  #   slack_configs: [{ api_url: https://hooks.slack.com/services/..., channel: "#alerts" }]

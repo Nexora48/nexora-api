@@ -174,8 +174,11 @@ func (s *Service) one(ctx context.Context, societyID, id uuid.UUID, unitID *uuid
 }
 
 func (s *Service) many(ctx context.Context, where []string, args []any, order string, limit, offset int) ([]Visit, int, error) {
-	q := s.selectCols() + `, count(*) OVER()` + fromJoin + ` WHERE ` + strings.Join(where, " AND ") + ` ORDER BY ` + order +
-		fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+	// The page is chosen first from light columns (with the window count), then the expensive columns
+	// (a correlated resident lookup per row) are computed only for the rows of that page.
+	q := `WITH page AS (SELECT v.id, count(*) OVER() AS total` + fromJoin + ` WHERE ` + strings.Join(where, " AND ") + ` ORDER BY ` + order +
+		fmt.Sprintf(` LIMIT $%d OFFSET $%d)`, len(args)+1, len(args)+2) +
+		s.selectCols() + `, page.total FROM page JOIN visits v ON v.id = page.id` + strings.Replace(fromJoin, " FROM visits v", "", 1) + ` ORDER BY ` + order
 	rows, err := s.pool.Query(ctx, q, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err

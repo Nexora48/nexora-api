@@ -1,0 +1,30 @@
+# The API itself, for running the full stack (and the monitoring profile) in containers.
+#
+#   JWT_SECRET=... PLATFORM_JWT_SECRET=... PLATFORM_ENC_KEY=... METRICS_TOKEN=... \
+#   docker compose -f deployments/docker-compose.yml -f deployments/docker-compose.app.yml up -d --build
+#
+# APP_ENV=staging runs config.Validate: it refuses default secrets, fake payments, wildcard CORS and so on.
+services:
+  nexora-api:
+    build: { context: .., dockerfile: deployments/Dockerfile, args: { APP_COMMIT: "${APP_COMMIT:-}" } }
+    depends_on: [postgres, redis]
+    ports: ["8080:8080"]
+    environment:
+      APP_ENV: ${APP_ENV:-staging}
+      DATABASE_URL: ${DATABASE_URL:-postgres://nexora:nexora@postgres:5432/nexora?sslmode=disable}
+      REDIS_ADDR: redis:6379
+      AUTO_MIGRATE: "true"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      PLATFORM_JWT_SECRET: ${PLATFORM_JWT_SECRET:?set PLATFORM_JWT_SECRET}
+      PLATFORM_ENC_KEY: ${PLATFORM_ENC_KEY:?set PLATFORM_ENC_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5000}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost:8080}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      DB_RLS: ${DB_RLS:-false}
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-25}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      BACKUP_HEARTBEAT_FILE: /backups/backup.last
+    volumes: ["backups:/backups:ro"]
+volumes:
+  backups:

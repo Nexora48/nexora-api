@@ -3,9 +3,12 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/api ./cmd/api
 
-FROM gcr.io/distroless/static-debian12
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG APP_COMMIT=""
+ENV APP_COMMIT=$APP_COMMIT
 COPY --from=build /out/api /api
 EXPOSE 8080
+USER nonroot:nonroot
 ENTRYPOINT ["/api"]

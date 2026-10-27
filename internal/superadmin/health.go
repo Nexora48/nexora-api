@@ -2,7 +2,10 @@ package superadmin
 
 import (
 	"context"
+	"os"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
@@ -21,6 +24,7 @@ type Check struct {
 
 type Health struct {
 	Version    string            `json:"version"`
+	Commit     string            `json:"commit"`
 	UptimeSec  int64             `json:"uptime_seconds"`
 	Status     string            `json:"status"`
 	Checks     []Check           `json:"checks"`
@@ -34,8 +38,41 @@ func (s *Service) SetBuild(version string) { s.version = version }
 // SetHub lets the health page show the number of live app connections.
 func (s *Service) SetHub(h interface{ Count() int }) { s.hub = h }
 
+// SetBackupFile points the health page at the file backup.sh touches after every good backup
+// (BACKUP_HEARTBEAT_FILE); a ".drill" twin is touched by the restore drill.
+func (s *Service) SetBackupFile(path string) { s.backupFile = path }
+
+func buildCommit() string {
+	if c := os.Getenv("APP_COMMIT"); c != "" {
+		if len(c) > 8 {
+			c = c[:8]
+		}
+		return c
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, kv := range bi.Settings {
+			if kv.Key == "vcs.revision" && len(kv.Value) >= 8 {
+				return kv.Value[:8]
+			}
+		}
+	}
+	return ""
+}
+
+func fileAge(path string) (time.Duration, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return time.Since(time.Unix(n, 0)), true
+}
+
 func (s *Service) Health(ctx context.Context) *Health {
-	h := &Health{Version: s.version, UptimeSec: int64(time.Since(started).Seconds()), Status: "ok", Checks: []Check{}, Sweepers: heartbeat.All()}
+	h := &Health{Version: s.version, Commit: buildCommit(), UptimeSec: int64(time.Since(started).Seconds()), Status: "ok", Checks: []Check{}, Sweepers: heartbeat.All()}
 	add := func(name, status, detail string) {
 		h.Checks = append(h.Checks, Check{name, status, detail})
 		if status == "fail" {
@@ -87,6 +124,23 @@ func (s *Service) Health(ctx context.Context) *Health {
 		add("Payment webhooks", "warn", itoaInt(stuck)+" events not processed in the last 24 hours")
 	} else {
 		add("Payment webhooks", "ok", "no stuck events in the last 24 hours")
+	}
+	if s.backupFile == "" {
+		add("Backups", "warn", "not configured (set BACKUP_HEARTBEAT_FILE and run scripts/backup.sh)")
+	} else if age, ok := fileAge(s.backupFile); !ok {
+		add("Backups", "fail", "no backup has ever been recorded")
+	} else if age > 50*time.Hour {
+		add("Backups", "fail", "last good backup "+age.Round(time.Hour).String()+" ago")
+	} else if age > 26*time.Hour {
+		add("Backups", "warn", "last good backup "+age.Round(time.Hour).String()+" ago")
+	} else {
+		detail := "last good backup " + age.Round(time.Minute).String() + " ago"
+		if drill, ok := fileAge(s.backupFile + ".drill"); ok {
+			detail += ", restore drill " + (drill.Round(time.Hour)).String() + " ago"
+		} else {
+			detail += ", restore drill never run"
+		}
+		add("Backups", "ok", detail)
 	}
 	if s.hub != nil {
 		add("Live connections", "ok", itoaInt(s.hub.Count())+" apps connected")

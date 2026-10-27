@@ -2,12 +2,28 @@ package app_test
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/Nexora48/nexora-api/internal/app"
 	"github.com/Nexora48/nexora-api/internal/config"
+	"github.com/Nexora48/nexora-api/internal/mail"
+	"github.com/Nexora48/nexora-api/internal/platform/heartbeat"
+	"github.com/Nexora48/nexora-api/internal/platform/metrics"
+	"github.com/Nexora48/nexora-api/internal/superadmin"
 )
 
 func scrape(t *testing.T, base, tok string) (int, string) {
@@ -111,5 +127,173 @@ func TestNoSecretsInLogs(t *testing.T) {
 		if strings.Contains(out, secret) {
 			t.Errorf("log contains %q", secret)
 		}
+	}
+}
+
+// The check "is there room?" and the creation that follows must not interleave: 20 parallel creations at a
+// limit of 5 create exactly 5.
+func TestPlanLimitHoldsUnderParallelCreations(t *testing.T) {
+	s := newSoc(t)
+	tok := superToken(t)
+	pid := newPlan(t, tok, uniq("par"), []string{"visitors"}, map[string]any{"max_guards": 5, "max_units": 7})
+	assign(t, tok, s.ID, pid, false)
+	bid, _ := setupBlock(t, s, "P", 1, 2) // 2 flats used, 5 left
+
+	var wg sync.WaitGroup
+	var okGuards, limitedGuards, okUnits, limitedUnits, other atomic.Int64
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			r := call(t, "POST", "/api/v1/society/guards", s.Admin, map[string]any{"full_name": fmt.Sprintf("Guard %d", i), "phone": nextPhone()})
+			switch {
+			case r.Status == 201:
+				okGuards.Add(1)
+			case r.errCode() == "PLAN_LIMIT":
+				limitedGuards.Add(1)
+			default:
+				other.Add(1)
+			}
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			r := call(t, "POST", "/api/v1/society/units", s.Admin, map[string]any{"block_id": bid, "floor": 2, "number": fmt.Sprintf("P2%02d", i), "unit_type": "2BHK"})
+			switch {
+			case r.Status == 201:
+				okUnits.Add(1)
+			case r.errCode() == "PLAN_LIMIT":
+				limitedUnits.Add(1)
+			default:
+				other.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if okGuards.Load() != 5 || limitedGuards.Load() != 15 {
+		t.Fatalf("guards: %d created, %d refused", okGuards.Load(), limitedGuards.Load())
+	}
+	if okUnits.Load() != 5 || limitedUnits.Load() != 15 {
+		t.Fatalf("flats: %d created, %d refused", okUnits.Load(), limitedUnits.Load())
+	}
+	if other.Load() != 0 {
+		t.Fatalf("%d requests failed another way", other.Load())
+	}
+	var guards, units int
+	_ = pool.QueryRow(context.Background(), `SELECT count(*) FROM memberships WHERE society_id=$1 AND role_key='guard'`, s.ID).Scan(&guards)
+	_ = pool.QueryRow(context.Background(), `SELECT count(*) FROM units WHERE society_id=$1`, s.ID).Scan(&units)
+	if guards != 5 || units != 7 {
+		t.Fatalf("rows: %d guards, %d flats", guards, units)
+	}
+}
+
+func TestHealthShowsBackupAgeAndCommit(t *testing.T) {
+	sup := supportToken(t)
+	check := func() map[string]any {
+		h := sa(t, "GET", "/health", sup, nil)
+		for _, c := range h.data()["checks"].([]any) {
+			if m := c.(map[string]any); m["name"] == "Backups" {
+				return m
+			}
+		}
+		t.Fatal("no Backups check")
+		return nil
+	}
+	if c := check(); c["status"] != "warn" {
+		t.Fatalf("unconfigured: %v", c)
+	}
+	f := filepath.Join(t.TempDir(), "backup.last")
+	aplat.SetBackupFile(f)
+	defer aplat.SetBackupFile("")
+	if c := check(); c["status"] != "fail" {
+		t.Fatalf("never backed up: %v", c)
+	}
+	write := func(age time.Duration) {
+		_ = os.WriteFile(f, []byte(strconv.FormatInt(time.Now().Add(-age).Unix(), 10)), 0o644)
+	}
+	write(2 * time.Hour)
+	if c := check(); c["status"] != "ok" || !strings.Contains(c["detail"].(string), "restore drill never run") {
+		t.Fatalf("fresh backup: %v", c)
+	}
+	write(30 * time.Hour)
+	if c := check(); c["status"] != "warn" {
+		t.Fatalf("a day-old backup: %v", c)
+	}
+	write(60 * time.Hour)
+	if c := check(); c["status"] != "fail" {
+		t.Fatalf("a stale backup: %v", c)
+	}
+}
+
+// Every nexora_* metric an alert or a dashboard uses must really be exposed, or the alert can never fire.
+func TestAlertsAndDashboardsOnlyUseMetricsThatExist(t *testing.T) {
+	srv2, _ := instance(t, io.Discard, nil)
+	get(t, srv2.URL, "/api/v1/me", "") // one request so the HTTP series exist
+	hb := filepath.Join(t.TempDir(), "hb")
+	_ = os.WriteFile(hb, []byte(strconv.FormatInt(time.Now().Unix(), 10)), 0o644)
+	metrics.BackupFile = hb
+	defer func() { metrics.BackupFile = "" }()
+	mustExec(t, context.Background(), `SELECT 1`)
+	_, body := scrape(t, srv2.URL, "")
+
+	exposed := map[string]bool{}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "# TYPE ") {
+			exposed[strings.Fields(line)[2]] = true
+		}
+	}
+	if len(exposed) < 10 {
+		t.Fatalf("only %d metrics exposed", len(exposed))
+	}
+	// a heartbeat for the job-age series
+	heartbeat.Beat("probe")
+	_, body = scrape(t, srv2.URL, "")
+	if !strings.Contains(body, "nexora_job_last_run_age_seconds") {
+		t.Error("job age metric not exposed after a heartbeat")
+	}
+	exposed["nexora_job_last_run_age_seconds"] = true
+
+	re := regexp.MustCompile(`nexora_[a-z0-9_]+`)
+	files, _ := filepath.Glob(filepath.Join("..", "..", "deployments", "monitoring", "*.yml"))
+	dash, _ := filepath.Glob(filepath.Join("..", "..", "deployments", "monitoring", "grafana", "dashboards", "*.json"))
+	files = append(files, dash...)
+	if len(files) < 4 {
+		t.Fatalf("monitoring files not found: %v", files)
+	}
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		for _, name := range re.FindAllString(string(b), -1) {
+			base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(name, "_bucket"), "_sum"), "_count")
+			if !exposed[name] && !exposed[base] && !strings.HasSuffix(name, "_total") {
+				t.Errorf("%s uses %s, which the API does not expose", filepath.Base(f), name)
+			}
+			if strings.HasSuffix(name, "_total") && !exposed[name] && !exposed[strings.TrimSuffix(name, "_total")] {
+				t.Errorf("%s uses counter %s, which the API does not expose", filepath.Base(f), name)
+			}
+		}
+	}
+}
+
+func TestStaffInvitationIsEmailedWhenAMailerIsConfigured(t *testing.T) {
+	rec := &mail.Recorder{}
+	srv2, _ := instanceWith(t, io.Discard, nil, func(d *app.Deps) { d.Mailer = rec })
+	_ = srv2
+	boss := newStaff(t, superadmin.RoleSuper, true)
+	tok := func() string {
+		l := sa2(t, srv2.URL, "POST", "/auth/login", "", map[string]any{"email": boss.Email, "password": boss.Password})
+		v := sa2(t, srv2.URL, "POST", "/auth/mfa/verify", "", map[string]any{"mfa_token": l.str("mfa_token"), "code": code(t, boss.Secret, 0)})
+		return v.str("access_token")
+	}()
+	email := fmt.Sprintf("mailed-%s@nexora.test", uuid.NewString()[:6])
+	r := sa2(t, srv2.URL, "POST", "/staff", tok, map[string]any{"email": email, "full_name": "Mia Mail", "role": "platform_support"})
+	if r.Status != 201 || r.data()["emailed"] != true || r.str("invite_token") == "" {
+		t.Fatalf("invite: %d %v", r.Status, r.Body)
+	}
+	if len(rec.Sent) != 1 || rec.Sent[0].To != email || !strings.Contains(rec.Sent[0].Body, r.str("invite_token")) || !strings.Contains(rec.Sent[0].Body, "support staff") {
+		t.Fatalf("mail: %+v", rec.Sent)
+	}
+	// without a mailer the invitation still works and says it was not emailed
+	r2 := sa(t, "POST", "/staff", superToken(t), map[string]any{"email": "plain-" + email, "full_name": "Plain", "role": "platform_support"})
+	if r2.Status != 201 || r2.data()["emailed"] != false {
+		t.Fatalf("no mailer: %d %v", r2.Status, r2.Body)
 	}
 }

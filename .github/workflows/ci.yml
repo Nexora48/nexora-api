@@ -7,6 +7,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod }
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client-16 || true
       - run: go vet ./...
       - run: go test ./... -race
+        env: { PG_BIN: /usr/lib/postgresql/16/bin }
       - run: go build ./...
+
+  isolation:
+    # the whole integration suite again, as the restricted row-level-security role, and through a one-connection pool
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: TEST_RLS=1 go test ./internal/app/... -timeout 10m
+      - run: TEST_MAXCONNS=1 go test ./internal/app/... -timeout 10m
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...

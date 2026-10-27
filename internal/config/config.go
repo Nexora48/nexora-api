@@ -51,19 +51,23 @@ type Config struct {
 	AttachmentMaxMB    int
 
 	// Hardening (M11)
-	TrustProxy     bool          // honour X-Forwarded-For / X-Real-IP (only behind a proxy you control)
-	MaxBodyMB      int           // hard ceiling for any request body
-	SlowRequest    time.Duration // requests slower than this are logged as warnings
-	RateIPPerMin   int           // per-IP requests per minute (0 = off)
-	RateUserPerMin int           // per-user requests per minute (0 = off)
-	MetricsToken   string        // bearer token for /metrics (empty = only loopback may scrape)
-	SentryDSN      string
-	SMTPHost       string
-	SMTPPort       int
-	SMTPUser       string
-	SMTPPass       string
-	MailFrom       string
-	RLS            bool // set app.society_id on tenant connections and run with row-level security
+	TrustProxy          bool          // honour X-Forwarded-For / X-Real-IP (only behind a proxy you control)
+	MaxBodyMB           int           // hard ceiling for any request body
+	SlowRequest         time.Duration // requests slower than this are logged as warnings
+	RateIPPerMin        int           // per-IP requests per minute (0 = off)
+	RateUserPerMin      int           // per-user requests per minute (0 = off)
+	MetricsToken        string        // bearer token for /metrics (empty = only loopback may scrape)
+	SentryDSN           string
+	SMTPHost            string
+	SMTPPort            int
+	SMTPUser            string
+	SMTPPass            string
+	MailFrom            string
+	ConsoleURL          string        // where the SuperAdmin web app lives (used in invitation e-mails)
+	BackupHeartbeatFile string        // touched by scripts/backup.sh; the System page reads its age
+	DBMaxConns          int           // pool size per API instance
+	SlowQuery           time.Duration // statements slower than this are logged (SQL text only)
+	RLS                 bool          // set app.society_id on tenant connections and run with row-level security
 }
 
 // IsDev enables dev-only behaviour (fixed OTP, console SMS, seed data).
@@ -131,7 +135,17 @@ func Load() (Config, error) {
 	cfg.SMTPHost, cfg.SMTPUser, cfg.SMTPPass = os.Getenv("SMTP_HOST"), os.Getenv("SMTP_USER"), os.Getenv("SMTP_PASS")
 	cfg.SMTPPort, _ = strconv.Atoi(get("SMTP_PORT", "587"))
 	cfg.MailFrom = get("MAIL_FROM", "Nexora <no-reply@nexora.local>")
+	cfg.ConsoleURL = os.Getenv("CONSOLE_URL")
 	cfg.RLS = getBool("DB_RLS", false)
+	cfg.BackupHeartbeatFile = os.Getenv("BACKUP_HEARTBEAT_FILE")
+	cfg.SlowQuery = 500 * time.Millisecond
+	if v, err := strconv.Atoi(os.Getenv("SLOW_QUERY_MS")); err == nil && v >= 0 {
+		cfg.SlowQuery = time.Duration(v) * time.Millisecond
+	}
+	cfg.DBMaxConns = 25
+	if v, err := strconv.Atoi(os.Getenv("DB_MAX_CONNS")); err == nil && v > 0 {
+		cfg.DBMaxConns = v
+	}
 	cfg.AmenityReminder = time.Hour
 	if v, err := strconv.Atoi(os.Getenv("AMENITY_REMINDER_MIN")); err == nil && v > 0 {
 		cfg.AmenityReminder = time.Duration(v) * time.Minute

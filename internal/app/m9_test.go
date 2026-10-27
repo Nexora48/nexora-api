@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -626,14 +627,20 @@ func TestRazorpayWebhookIsVerifiedAndIdempotent(t *testing.T) {
 	o3 := call(t, "POST", "/api/v1/payments/orders", c.rA, map[string]any{"amount_paise": 100000})
 	ref3 := orderRef(o3.str("id"))
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	var serverErrors atomic.Int64
+	for i := 0; i < 50; i++ { // a storm: 50 deliveries, seven distinct event ids
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			webhook(t, society, "whsec-222", fmt.Sprintf("evt-par-%d", i%3), captured(ref3, "pay_par", 100000))
+			if st := webhook(t, society, "whsec-222", fmt.Sprintf("evt-par-%d", i%7), captured(ref3, "pay_par", 100000)); st >= 500 {
+				serverErrors.Add(1)
+			}
 		}()
 	}
 	wg.Wait()
+	if serverErrors.Load() != 0 {
+		t.Fatalf("%d webhook deliveries failed with a 5xx", serverErrors.Load())
+	}
 	if paymentCount(t, unit) != 2 {
 		t.Fatalf("parallel webhooks produced %d payments, want 2 in total", paymentCount(t, unit))
 	}

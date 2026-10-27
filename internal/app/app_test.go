@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	// TEST_RLS=1 runs the whole suite through the row-level-security role (see `make test-rls`)
-	pool, err = database.NewPostgres(ctx, url, database.Options{RLS: os.Getenv("TEST_RLS") == "1"})
+	pool, err = database.NewPostgres(ctx, url, database.Options{RLS: os.Getenv("TEST_RLS") == "1", MaxConns: testMaxConns()})
 	if err != nil {
 		panic(err)
 	}
@@ -432,4 +433,11 @@ func TestRegisterDevice(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("device row missing: %d", n)
 	}
+}
+
+// TEST_MAXCONNS=1 runs the suite through a one-connection pool: any code that holds a connection while asking
+// for a second one then hangs, which is how the pool-deadlock probe in `make test-pool1` finds it.
+func testMaxConns() int32 {
+	n, _ := strconv.Atoi(os.Getenv("TEST_MAXCONNS"))
+	return int32(n)
 }

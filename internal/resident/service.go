@@ -242,6 +242,11 @@ func boolOr(p *bool, def bool) bool {
 }
 
 func (s *Service) Create(ctx context.Context, societyID, actorID uuid.UUID, in CreateInput) (*Detail, error) {
+	release, err := s.limits.Guard(ctx, societyID, limits.MaxResidents)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.limits.Check(ctx, societyID, limits.MaxResidents, 1); err != nil {
 		return nil, err
 	}

@@ -179,6 +179,11 @@ func (r *Repository) BulkCreateUnits(ctx context.Context, societyID uuid.UUID, b
 	}
 	rows.Close()
 
+	release, err := r.limits.Guard(ctx, societyID, limits.MaxUnits)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	room, err := r.limits.Room(ctx, societyID, limits.MaxUnits)
 	if err != nil {
 		return nil, err
@@ -291,11 +296,16 @@ func (r *Repository) GetUnit(ctx context.Context, societyID, id uuid.UUID) (*Uni
 }
 
 func (r *Repository) CreateUnit(ctx context.Context, societyID, blockID uuid.UUID, floor int, number, unitType string, area *int) (*Unit, error) {
+	release, err := r.limits.Guard(ctx, societyID, limits.MaxUnits)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := r.limits.Check(ctx, societyID, limits.MaxUnits, 1); err != nil {
 		return nil, err
 	}
 	var id uuid.UUID
-	err := r.pool.QueryRow(ctx, `
+	err = r.pool.QueryRow(ctx, `
 		INSERT INTO units (society_id, block_id, floor, number, unit_type, area_sqft)
 		SELECT $1, b.id, $3, $4, $5, $6 FROM blocks b WHERE b.id=$2 AND b.society_id=$1
 		RETURNING id`, societyID, blockID, floor, number, unitType, area).Scan(&id)
