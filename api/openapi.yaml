@@ -520,10 +520,12 @@ paths:
     post: { summary: "Platform: mark paid {reference, paid_on?}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
   /api/v1/society/dashboard:
     get: { summary: "Office: one-call dashboard (residents, visitors with a 7-day series and recent entries, complaints by status and recent ones, this month's collections). A section is null when its service switch is off; empty data is empty, never invented. Needs report.read.", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/join/societies:
+    get: { summary: "Applicant: the societies that accept sign-ups (id, name, city) for the picker; a society with sign-ups switched off is not listed", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/join/society:
-    get: { summary: "Applicant (token from OTP verify with applicant_required): the society behind ?code= with its blocks and flats", security: [{ bearer: [] }], responses: { "200": { description: OK }, "404": { description: JOIN_CODE_UNKNOWN }, "403": { description: JOIN_DISABLED } } }
+    get: { summary: "Applicant (token from OTP verify with applicant_required): the society behind ?id= (picker) or ?code= with its blocks and flats", security: [{ bearer: [] }], responses: { "200": { description: OK }, "404": { description: JOIN_CODE_UNKNOWN }, "403": { description: JOIN_DISABLED } } }
   /api/v1/join/requests:
-    post: { summary: "Applicant: ask to join {code, unit_id, type owner|tenant, full_name}; one open request per society", security: [{ bearer: [] }], responses: { "201": { description: Created }, "409": { description: REQUEST_PENDING or ALREADY_MEMBER } } }
+    post: { summary: "Applicant: ask to join {society_id or code, unit_id, type owner|tenant, full_name}; one open request per society", security: [{ bearer: [] }], responses: { "201": { description: Created }, "409": { description: REQUEST_PENDING or ALREADY_MEMBER } } }
   /api/v1/join/status:
     get: { summary: "Applicant: state none|pending|approved|rejected, society, flat, reason, member", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/join/cancel:

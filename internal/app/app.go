@@ -289,6 +289,7 @@ func New(d Deps) *App {
 		// Self-registration: a verified phone number with no society yet (applicant token) asks to join one.
 		r.Route("/join", func(r chi.Router) {
 			r.Use(middleware.RateLimitStrict(d.Redis, "join", 60, 10*time.Minute), joinH.Applicant)
+			r.Get("/societies", joinH.Societies)
 			r.Get("/society", joinH.Society)
 			r.Post("/requests", joinH.Request)
 			r.Get("/status", joinH.Status)
