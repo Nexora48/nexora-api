@@ -6,6 +6,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/amenity"
 	"github.com/Nexora48/nexora-api/internal/attendance"
 	"github.com/Nexora48/nexora-api/internal/billing"
+	"github.com/Nexora48/nexora-api/internal/dashboard"
 	"github.com/Nexora48/nexora-api/internal/helper"
 	"github.com/Nexora48/nexora-api/internal/limits"
 	"github.com/Nexora48/nexora-api/internal/mail"
@@ -196,6 +197,7 @@ func New(d Deps) *App {
 	}
 	paySvc := payment.NewService(d.Pool, billSvc, aud, noteSvc, secretBox, d.Cfg.JWTSecret, d.Cfg.PaymentFake)
 	payH := payment.NewHandler(paySvc, d.Cfg.PublicBaseURL)
+	dashboardSvc := dashboard.New(d.Pool, feats, billSvc)
 	gateSvc := gate.NewService(d.Pool, aud, hub)
 	gateSvc.SetAttendance(attendSvc, feats)
 	gateSvc.SetLimits(planLimits)
@@ -468,6 +470,7 @@ func New(d Deps) *App {
 
 		r.Route("/society", func(r chi.Router) {
 			r.With(protect("report.read", "")...).Get("/plan", planLimits.MyPlan)
+			r.With(protect("report.read", "")...).Get("/dashboard", dashboardSvc.Handler)
 			r.Group(func(r chi.Router) { // notice board management
 				r.Use(protect("notice.manage", "community")...)
 				r.Get("/notices", noticeH.AdminList)
