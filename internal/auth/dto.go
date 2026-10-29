@@ -12,6 +12,9 @@ type DeviceInfo struct {
 
 type OTPRequest struct {
 	Phone string `json:"phone" validate:"required"`
+	// App lets the resident app ask for a code for a number that is not registered yet (self-registration).
+	// Other apps leave it empty and keep getting PHONE_NOT_REGISTERED for unknown numbers.
+	App string `json:"app" validate:"omitempty,oneof=living get admin"`
 }
 
 type OTPVerifyRequest struct {
@@ -64,6 +67,9 @@ type LoginResponse struct {
 	SelectionRequired  bool            `json:"selection_required"`
 	SelectionToken     string          `json:"selection_token,omitempty"`
 	Memberships        []MembershipDTO `json:"memberships,omitempty"`
+	// ApplicantRequired: the number is verified but belongs to no society; use ApplicantToken with /join/*.
+	ApplicantRequired bool   `json:"applicant_required,omitempty"`
+	ApplicantToken    string `json:"applicant_token,omitempty"`
 }
 
 func toMembershipDTO(m user.Membership) MembershipDTO {

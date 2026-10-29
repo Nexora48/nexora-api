@@ -520,6 +520,25 @@ paths:
     post: { summary: "Platform: mark paid {reference, paid_on?}", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
   /api/v1/society/dashboard:
     get: { summary: "Office: one-call dashboard (residents, visitors with a 7-day series and recent entries, complaints by status and recent ones, this month's collections). A section is null when its service switch is off; empty data is empty, never invented. Needs report.read.", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/join/society:
+    get: { summary: "Applicant (token from OTP verify with applicant_required): the society behind ?code= with its blocks and flats", security: [{ bearer: [] }], responses: { "200": { description: OK }, "404": { description: JOIN_CODE_UNKNOWN }, "403": { description: JOIN_DISABLED } } }
+  /api/v1/join/requests:
+    post: { summary: "Applicant: ask to join {code, unit_id, type owner|tenant, full_name}; one open request per society", security: [{ bearer: [] }], responses: { "201": { description: Created }, "409": { description: REQUEST_PENDING or ALREADY_MEMBER } } }
+  /api/v1/join/status:
+    get: { summary: "Applicant: state none|pending|approved|rejected, society, flat, reason, member", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/join/cancel:
+    post: { summary: "Applicant: withdraw the open request", security: [{ bearer: [] }], responses: { "204": { description: No content } } }
+  /api/v1/join/claim:
+    post: { summary: "Applicant: once approved, exchange the applicant token for a normal session; 409 NOT_APPROVED until then", security: [{ bearer: [] }], responses: { "200": { description: OK }, "409": { description: NOT_APPROVED } } }
+  /api/v1/society/join-requests:
+    get: { summary: "Office (resident.read): join requests, ?status=pending|approved|rejected|all", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/join-requests/{id}/approve:
+    post: { summary: "Office (resident.manage): approve; creates the resident like Add resident (one owner per flat, plan limits apply)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/join-requests/{id}/reject:
+    post: { summary: "Office (resident.manage): reject {reason?}; the applicant sees the reason", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/join-settings:
+    get: { summary: "Office: join code, whether self-registration is on, pending count", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: "Office (resident.manage): {enabled?, regenerate?} switch self-registration or replace the code", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/society/plan:
     get: { summary: "Office: my plan, limits and live usage (read-only)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/app-config:

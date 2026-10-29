@@ -14,6 +14,9 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// ClientFrom describes the caller (address, user agent, device) for sessions and audit rows.
+func ClientFrom(r *http.Request, dev *DeviceInfo) ClientInfo { return client(r, dev) }
+
 func client(r *http.Request, dev *DeviceInfo) ClientInfo {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -28,7 +31,7 @@ func (h *Handler) RequestOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, err)
 		return
 	}
-	if err := h.svc.RequestOTP(r.Context(), req.Phone); err != nil {
+	if err := h.svc.RequestOTP(r.Context(), req.Phone, req.App); err != nil {
 		httpx.Fail(w, err)
 		return
 	}

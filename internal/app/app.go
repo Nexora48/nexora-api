@@ -8,6 +8,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/billing"
 	"github.com/Nexora48/nexora-api/internal/dashboard"
 	"github.com/Nexora48/nexora-api/internal/helper"
+	"github.com/Nexora48/nexora-api/internal/join"
 	"github.com/Nexora48/nexora-api/internal/limits"
 	"github.com/Nexora48/nexora-api/internal/mail"
 	"github.com/Nexora48/nexora-api/internal/payment"
@@ -127,6 +128,7 @@ func New(d Deps) *App {
 	societyH := society.NewHandler(societies, aud)
 	residentSvc := resident.NewService(d.Pool, aud)
 	residentSvc.SetLimits(planLimits)
+	var joinH *join.Handler // wired once notifications and sign-in exist
 	residentH := resident.NewHandler(residentSvc)
 	householdSvc := household.NewService(d.Pool, aud)
 	householdSvc.SetLimits(planLimits)
@@ -155,6 +157,7 @@ func New(d Deps) *App {
 	visitorSvc.SetRules(deliverySvc)
 	deliveryH := delivery.NewHandler(deliverySvc)
 	noteH := notify.NewHandler(noteSvc)
+	joinH = join.NewHandler(join.New(d.Pool, residentSvc, noteSvc, aud), tokens, authSvc)
 	sosSvc := sos.NewService(d.Pool, aud, noteSvc, hub, d.Cfg.SOSEscalateAfter, d.Cfg.SOSCancelWindow)
 	sosH := sos.NewHandler(sosSvc)
 	var store blob.Store // the same store as visitor photos; nil disables uploads
@@ -282,6 +285,16 @@ func New(d Deps) *App {
 			superadmin.Mount(r, saSvc, d.Redis, d.Cfg.PlatformAllowedCIDRs)
 			r.With(middleware.RateLimit(d.Redis, "app-config", 120, time.Minute)).Get("/app-config", superadmin.AppConfigHandler(saSvc))
 		}
+
+		// Self-registration: a verified phone number with no society yet (applicant token) asks to join one.
+		r.Route("/join", func(r chi.Router) {
+			r.Use(middleware.RateLimitStrict(d.Redis, "join", 60, 10*time.Minute), joinH.Applicant)
+			r.Get("/society", joinH.Society)
+			r.Post("/requests", joinH.Request)
+			r.Get("/status", joinH.Status)
+			r.Post("/cancel", joinH.Cancel)
+			r.Post("/claim", joinH.Claim)
+		})
 
 		r.Route("/auth", func(r chi.Router) {
 			r.With(middleware.RateLimitStrict(d.Redis, "otp", 20, time.Hour)).Post("/otp/request", authH.RequestOTP)
@@ -628,6 +641,8 @@ func New(d Deps) *App {
 				r.Get("/stats", societyH.Stats)
 				r.Get("/residents", residentH.List)
 				r.Get("/residents/{id}", residentH.Get)
+				r.Get("/join-requests", joinH.List)
+				r.Get("/join-settings", joinH.GetSettings)
 			})
 			r.Group(func(r chi.Router) { // society structure
 				r.Use(protect("society.manage", "")...)
@@ -648,6 +663,9 @@ func New(d Deps) *App {
 				r.Post("/residents/{id}/move-out", residentH.MoveOut())
 				r.With(heavy).Post("/residents/import", residentH.Import)
 				r.Get("/residents/import/template", residentH.ImportTemplate)
+				r.Post("/join-requests/{id}/approve", joinH.Approve)
+				r.Post("/join-requests/{id}/reject", joinH.Reject)
+				r.Put("/join-settings", joinH.PutSettings)
 			})
 		})
 	})

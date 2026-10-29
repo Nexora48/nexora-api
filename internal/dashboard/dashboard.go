@@ -90,12 +90,28 @@ type Payments struct {
 	HasInvoices      bool    `json:"has_invoices"`
 }
 
+type JoinRequest struct {
+	ID        uuid.UUID `json:"id"`
+	FullName  string    `json:"full_name"`
+	Phone     string    `json:"phone"`
+	Flat      string    `json:"flat"`
+	Type      string    `json:"type"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// JoinRequests are people who asked to join through the resident app and wait for the office.
+type JoinRequests struct {
+	Pending int           `json:"pending"`
+	Recent  []JoinRequest `json:"recent"` // the oldest waiting first, at most 5
+}
+
 type Summary struct {
-	Today      string      `json:"today"`
-	Residents  Residents   `json:"residents"`
-	Visitors   *Visitors   `json:"visitors"`
-	Complaints *Complaints `json:"complaints"`
-	Payments   *Payments   `json:"payments"`
+	Today        string       `json:"today"`
+	JoinRequests JoinRequests `json:"join_requests"`
+	Residents    Residents    `json:"residents"`
+	Visitors     *Visitors    `json:"visitors"`
+	Complaints   *Complaints  `json:"complaints"`
+	Payments     *Payments    `json:"payments"`
 }
 
 const flatLabel = `bl.code || '-' || un.number`
@@ -127,6 +143,25 @@ func (s *Service) Summary(ctx context.Context, p authctx.Principal) (*Summary, e
 		return nil, err
 	}
 
+	out.JoinRequests.Recent = []JoinRequest{}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM join_requests WHERE society_id=$1 AND status='pending'`, p.SocietyID).Scan(&out.JoinRequests.Pending); err != nil {
+		return nil, err
+	}
+	jr, err := s.pool.Query(ctx, `SELECT r.id, r.full_name, r.phone, b.code || '-' || un.number, r.requested_type, r.created_at
+		FROM join_requests r JOIN units un ON un.id=r.unit_id JOIN blocks b ON b.id=un.block_id
+		WHERE r.society_id=$1 AND r.status='pending' ORDER BY r.created_at LIMIT 5`, p.SocietyID)
+	if err != nil {
+		return nil, err
+	}
+	for jr.Next() {
+		var x JoinRequest
+		if err := jr.Scan(&x.ID, &x.FullName, &x.Phone, &x.Flat, &x.Type, &x.CreatedAt); err != nil {
+			jr.Close()
+			return nil, err
+		}
+		out.JoinRequests.Recent = append(out.JoinRequests.Recent, x)
+	}
+	jr.Close()
 	if feats["visitors"] {
 		v, err := s.visitors(ctx, p.SocietyID, tz, now)
 		if err != nil {

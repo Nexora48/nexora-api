@@ -20,6 +20,8 @@ const (
 	issuer            = "nexora"
 	audTenant         = "tenant"
 	audSelection      = "selection"
+	audApplicant      = "applicant"
+	applicantTokenTTL = 30 * 24 * time.Hour
 	selectionTokenTTL = 5 * time.Minute
 )
 
@@ -110,6 +112,28 @@ func (t *TokenManager) ParseSelection(token string) (uuid.UUID, error) {
 		return uuid.Nil, ErrTokenInvalid
 	}
 	return id, nil
+}
+
+// IssueApplicant is a token for someone who proved they own a phone number but belongs to no society yet.
+// It only opens the join endpoints (look up a society, ask to join, check the answer).
+func (t *TokenManager) IssueApplicant(phone string) (string, error) {
+	now := time.Now()
+	return t.sign(accessClaims{RegisteredClaims: jwt.RegisteredClaims{
+		Issuer: issuer, Subject: phone, Audience: jwt.ClaimStrings{audApplicant},
+		ID: uuid.NewString(), IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(applicantTokenTTL)),
+	}})
+}
+
+// ParseApplicant returns the verified phone number.
+func (t *TokenManager) ParseApplicant(token string) (string, error) {
+	c, err := t.parse(token, audApplicant)
+	if err != nil {
+		return "", err
+	}
+	if !ValidPhone(c.Subject) {
+		return "", ErrTokenInvalid
+	}
+	return c.Subject, nil
 }
 
 // NewRefreshToken returns a random opaque token and its SHA-256 hash (stored in DB).
