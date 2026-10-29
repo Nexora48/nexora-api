@@ -32,6 +32,7 @@ var (
 	ErrNotFound      = httpx.NewError(http.StatusNotFound, "NOT_FOUND", "request not found")
 	ErrNotPending    = httpx.NewError(http.StatusConflict, "NOT_PENDING", "this request has already been decided")
 	ErrFlatNotFound  = httpx.NewError(http.StatusNotFound, "UNIT_NOT_FOUND", "flat not found in this society")
+	ErrFlatTaken     = httpx.NewError(http.StatusConflict, "FLAT_TAKEN", "this flat already has a resident of that type; choose another flat or type")
 )
 
 func invalid(msg string) *httpx.AppError {
@@ -52,8 +53,10 @@ func New(pool *pgxpool.Pool, res *resident.Service, notes *notify.Service, a *au
 // ── applicant side (token = a verified phone number) ─────────────────────────
 
 type Unit struct {
-	ID     uuid.UUID `json:"id"`
-	Number string    `json:"number"`
+	ID          uuid.UUID `json:"id"`
+	Number      string    `json:"number"`
+	OwnerTaken  bool      `json:"owner_taken"`  // the flat already has its owner
+	TenantTaken bool      `json:"tenant_taken"` // the flat already has its tenant
 }
 type Block struct {
 	Code  string `json:"code"`
@@ -124,7 +127,10 @@ func (s *Service) Lookup(ctx context.Context, code, id string) (*Society, error)
 	if !on {
 		return nil, ErrJoinOff
 	}
-	rows, err := s.pool.Query(ctx, `SELECT b.code, b.name, u.id, u.number FROM blocks b JOIN units u ON u.block_id=b.id WHERE b.society_id=$1 ORDER BY b.sort_order, b.code, u.floor, u.number`, so.ID)
+	rows, err := s.pool.Query(ctx, `SELECT b.code, b.name, u.id, u.number,
+		EXISTS (SELECT 1 FROM memberships m WHERE m.unit_id=u.id AND m.role_key='resident_owner' AND m.status IN ('active','suspended')),
+		EXISTS (SELECT 1 FROM memberships m WHERE m.unit_id=u.id AND m.role_key='resident_tenant' AND m.status IN ('active','suspended'))
+		FROM blocks b JOIN units u ON u.block_id=b.id WHERE b.society_id=$1 ORDER BY b.sort_order, b.code, u.floor, u.number`, so.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -133,14 +139,15 @@ func (s *Service) Lookup(ctx context.Context, code, id string) (*Society, error)
 	for rows.Next() {
 		var bc, bn, num string
 		var id uuid.UUID
-		if err := rows.Scan(&bc, &bn, &id, &num); err != nil {
+		var ot, tt bool
+		if err := rows.Scan(&bc, &bn, &id, &num, &ot, &tt); err != nil {
 			return nil, err
 		}
 		if n := len(so.Blocks); n == 0 || so.Blocks[n-1].Code != bc {
 			so.Blocks = append(so.Blocks, Block{Code: bc, Name: bn, Units: []Unit{}})
 		}
 		b := &so.Blocks[len(so.Blocks)-1]
-		b.Units = append(b.Units, Unit{ID: id, Number: num})
+		b.Units = append(b.Units, Unit{ID: id, Number: num, OwnerTaken: ot, TenantTaken: tt})
 	}
 	return &so, rows.Err()
 }
@@ -179,6 +186,17 @@ func (s *Service) Request(ctx context.Context, phone string, in RequestInput) (*
 	var flat string
 	if err := s.pool.QueryRow(ctx, `SELECT b.code || '-' || u.number FROM units u JOIN blocks b ON b.id=u.block_id WHERE u.id=$1 AND u.society_id=$2`, unit, soc).Scan(&flat); err != nil {
 		return nil, ErrFlatNotFound
+	}
+	role := "resident_tenant"
+	if in.Type == "owner" {
+		role = "resident_owner"
+	}
+	var taken bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM memberships WHERE unit_id=$1 AND role_key=$2 AND status IN ('active','suspended'))`, unit, role).Scan(&taken); err != nil {
+		return nil, err
+	}
+	if taken {
+		return nil, ErrFlatTaken
 	}
 	var member bool
 	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE u.phone=$1 AND m.society_id=$2 AND m.status IN ('active','suspended'))`, phone, soc).Scan(&member); err != nil {

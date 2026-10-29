@@ -204,10 +204,10 @@ func TestApprovalKeepsTheFlatRulesAndTheOfficeSwitches(t *testing.T) {
 	s := newSoc(t)
 	_, units := setupBlock(t, s, "A", 1, 1)
 	code := joinCode(t, s)
-	// the flat already has an owner added by the office: approving a second owner must fail, the request stays open
-	addResident(t, s, units["A101"], "owner", "Existing Owner", nextPhone())
 	tok := applicantLogin(t, nextPhone()).str("applicant_token")
+	// the flat is free: the request is filed, then the office gives the flat an owner before approving
 	call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"code": code, "unit_id": units["A101"], "type": "owner", "full_name": "Second Owner"})
+	addResident(t, s, units["A101"], "owner", "Existing Owner", nextPhone())
 	rows, _ := callList(t, "/api/v1/society/join-requests?status=pending", s.Admin)
 	id := rows[0]["id"].(string)
 	if r := call(t, "POST", "/api/v1/society/join-requests/"+id+"/approve", s.Admin, nil); r.Status != 409 || r.errCode() != "UNIT_ROLE_TAKEN" {
@@ -305,5 +305,30 @@ func TestApplicantPicksASocietyFromTheListWithoutACode(t *testing.T) {
 	}
 	if r := call(t, "GET", "/api/v1/join/society?id="+id, tok, nil); r.Status == 200 {
 		t.Fatalf("lookup with sign-ups off: %d", r.Status)
+	}
+}
+
+func TestTakenFlatsAreMarkedAndCannotBeRequested(t *testing.T) {
+	s := newSoc(t)
+	_, units := setupBlock(t, s, "A", 1, 2)
+	code := joinCode(t, s)
+	addResident(t, s, units["A101"], "owner", "Existing Owner", nextPhone())
+	tok := applicantLogin(t, nextPhone()).str("applicant_token")
+
+	soc := call(t, "GET", "/api/v1/join/society?code="+code, tok, nil)
+	flags := map[string][2]bool{}
+	for _, u := range soc.data()["blocks"].([]any)[0].(map[string]any)["units"].([]any) {
+		m := u.(map[string]any)
+		flags[m["number"].(string)] = [2]bool{m["owner_taken"] == true, m["tenant_taken"] == true}
+	}
+	if flags["A101"] != [2]bool{true, false} || flags["A102"] != [2]bool{false, false} {
+		t.Fatalf("flags: %v", flags)
+	}
+	// an owned flat still takes a tenant, but not a second owner
+	if r := call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"code": code, "unit_id": units["A101"], "type": "owner", "full_name": "Late Owner"}); r.Status != 409 || r.errCode() != "FLAT_TAKEN" {
+		t.Fatalf("second owner: %d %v", r.Status, r.Body)
+	}
+	if r := call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"code": code, "unit_id": units["A101"], "type": "tenant", "full_name": "A Tenant"}); r.Status != 201 {
+		t.Fatalf("tenant of an owned flat: %d %v", r.Status, r.Body)
 	}
 }
