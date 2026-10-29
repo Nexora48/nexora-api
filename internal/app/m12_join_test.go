@@ -268,3 +268,42 @@ func TestSelfRegisteredRequestsAreIsolatedBetweenSocieties(t *testing.T) {
 		t.Fatalf("crossed flat: %d", r.Status)
 	}
 }
+
+func TestApplicantPicksASocietyFromTheListWithoutACode(t *testing.T) {
+	s := newSoc(t)
+	_, units := setupBlock(t, s, "A", 1, 2)
+	tok := applicantLogin(t, nextPhone()).str("applicant_token")
+	id := s.ID.String()
+	listed := func() bool {
+		items, r := callList(t, "/api/v1/join/societies", tok)
+		if r.Status != 200 {
+			t.Fatalf("list: %d %v", r.Status, r.Body)
+		}
+		for _, x := range items {
+			if x["id"] == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed() {
+		t.Fatal("a society that accepts sign-ups is in the picker")
+	}
+	if r := call(t, "GET", "/api/v1/join/society?id="+id, tok, nil); r.Status != 200 || len(r.data()["blocks"].([]any)) != 1 {
+		t.Fatalf("lookup by id: %d %v", r.Status, r.Body)
+	}
+	if r := call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"society_id": id, "unit_id": units["A101"], "type": "tenant", "full_name": "Pick Er"}); r.Status != 201 {
+		t.Fatalf("request by id: %d %v", r.Status, r.Body)
+	}
+	if r := call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"unit_id": units["A102"], "type": "tenant", "full_name": "Pick Er"}); r.Status == 201 {
+		t.Fatal("a request with neither society nor code must fail")
+	}
+	// switched off: gone from the picker and cannot be looked up
+	call(t, "PUT", "/api/v1/society/join-settings", s.Admin, map[string]any{"enabled": false})
+	if listed() {
+		t.Fatal("a society with sign-ups off must not be listed")
+	}
+	if r := call(t, "GET", "/api/v1/join/society?id="+id, tok, nil); r.Status == 200 {
+		t.Fatalf("lookup with sign-ups off: %d", r.Status)
+	}
+}

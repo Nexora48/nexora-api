@@ -53,7 +53,17 @@ func phoneOf(r *http.Request) string { p, _ := r.Context().Value(phoneKey{}).(st
 // ── applicant routes (mounted under /join behind Applicant) ──────────────────
 
 func (h *Handler) Society(w http.ResponseWriter, r *http.Request) {
-	v, err := h.svc.Lookup(r.Context(), r.URL.Query().Get("code"))
+	v, err := h.svc.Lookup(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("id"))
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.OK(w, v, nil)
+}
+
+// Societies lists the societies that accept sign-ups.
+func (h *Handler) Societies(w http.ResponseWriter, r *http.Request) {
+	v, err := h.svc.Societies(r.Context())
 	if err != nil {
 		httpx.Fail(w, err)
 		return

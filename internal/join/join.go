@@ -69,13 +69,52 @@ type Society struct {
 
 func normCode(c string) string { return strings.ToUpper(strings.TrimSpace(c)) }
 
+// societyBy picks the lookup column: a society id (from the picker) or the join code.
+func societyBy(code, id string) string {
+	if strings.TrimSpace(id) != "" {
+		return "id::text=$1"
+	}
+	return "join_code=$1"
+}
+
+func societyArg(code, id string) string {
+	if v := strings.TrimSpace(id); v != "" {
+		return strings.ToLower(v)
+	}
+	return normCode(code)
+}
+
+// Listed is a society an applicant can pick.
+type Listed struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+	City string    `json:"city"`
+}
+
+// Societies lists the societies that accept sign-ups, for the picker.
+func (s *Service) Societies(ctx context.Context) ([]Listed, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, name, city FROM societies WHERE join_enabled AND status <> 'suspended' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Listed{}
+	for rows.Next() {
+		var l Listed
+		if err := rows.Scan(&l.ID, &l.Name, &l.City); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // Lookup returns the society behind a join code with its blocks and flats.
-func (s *Service) Lookup(ctx context.Context, code string) (*Society, error) {
-	code = normCode(code)
+func (s *Service) Lookup(ctx context.Context, code, id string) (*Society, error) {
 	var so Society
 	var on bool
 	var status string
-	err := s.pool.QueryRow(ctx, `SELECT id, name, city, join_enabled, status FROM societies WHERE join_code=$1`, code).Scan(&so.ID, &so.Name, &so.City, &on, &status)
+	err := s.pool.QueryRow(ctx, `SELECT id, name, city, join_enabled, status FROM societies WHERE `+societyBy(code, id), societyArg(code, id)).Scan(&so.ID, &so.Name, &so.City, &on, &status)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && status == "suspended") {
 		return nil, ErrCodeUnknown
 	}
@@ -107,10 +146,11 @@ func (s *Service) Lookup(ctx context.Context, code string) (*Society, error) {
 }
 
 type RequestInput struct {
-	Code     string `json:"code" validate:"required,max=20"`
-	UnitID   string `json:"unit_id" validate:"required,uuid"`
-	Type     string `json:"type" validate:"required,oneof=owner tenant"`
-	FullName string `json:"full_name" validate:"required,min=2,max=100"`
+	Code      string `json:"code" validate:"omitempty,max=20"`
+	SocietyID string `json:"society_id" validate:"omitempty,uuid"`
+	UnitID    string `json:"unit_id" validate:"required,uuid"`
+	Type      string `json:"type" validate:"required,oneof=owner tenant"`
+	FullName  string `json:"full_name" validate:"required,min=2,max=100"`
 }
 
 // Request files a join request for the verified phone.
@@ -119,10 +159,13 @@ func (s *Service) Request(ctx context.Context, phone string, in RequestInput) (*
 	if len(name) < 2 {
 		return nil, invalid("enter your full name")
 	}
+	if strings.TrimSpace(in.Code) == "" && strings.TrimSpace(in.SocietyID) == "" {
+		return nil, invalid("choose your society")
+	}
 	var soc uuid.UUID
 	var on bool
 	var status, socName string
-	err := s.pool.QueryRow(ctx, `SELECT id, join_enabled, status, name FROM societies WHERE join_code=$1`, normCode(in.Code)).Scan(&soc, &on, &status, &socName)
+	err := s.pool.QueryRow(ctx, `SELECT id, join_enabled, status, name FROM societies WHERE `+societyBy(in.Code, in.SocietyID), societyArg(in.Code, in.SocietyID)).Scan(&soc, &on, &status, &socName)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && status == "suspended") {
 		return nil, ErrCodeUnknown
 	}
