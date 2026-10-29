@@ -26,6 +26,7 @@ const (
 var adminRoles = map[string]bool{"society_admin": true, "committee": true}
 
 var (
+	ErrNotApproved        = httpx.NewError(http.StatusConflict, "NOT_APPROVED", "the society office has not approved your request yet")
 	ErrPhoneNotRegistered = httpx.NewError(http.StatusNotFound, "PHONE_NOT_REGISTERED", "this number is not registered with any society")
 	ErrInvalidCreds       = httpx.NewError(http.StatusUnauthorized, "INVALID_CREDENTIALS", "incorrect email or password")
 	ErrAccountLocked      = httpx.NewError(http.StatusTooManyRequests, "ACCOUNT_LOCKED", "too many failed attempts, try again in 15 minutes")
@@ -63,12 +64,18 @@ type ClientInfo struct {
 
 // ── OTP flow ─────────────────────────────────────────────────────────────────
 
-func (s *Service) RequestOTP(ctx context.Context, phone string) error {
+// RequestOTP sends a code. A number that belongs to no society gets one only when the resident app asks
+// (app == "living"): that person may register themselves. Every other app keeps PHONE_NOT_REGISTERED.
+func (s *Service) RequestOTP(ctx context.Context, phone, app string) error {
 	if !ValidPhone(phone) {
 		return ErrInvalidPhone
 	}
+	selfRegister := app == "living"
 	u, err := s.users.FindByPhone(ctx, phone)
 	if errors.Is(err, user.ErrNotFound) {
+		if selfRegister {
+			return s.otp.Request(ctx, phone)
+		}
 		return ErrPhoneNotRegistered
 	}
 	if err != nil {
@@ -79,6 +86,9 @@ func (s *Service) RequestOTP(ctx context.Context, phone string) error {
 		return err
 	}
 	if u.Status != "active" || len(ms) == 0 {
+		if selfRegister && u.Status == "active" {
+			return s.otp.Request(ctx, phone)
+		}
 		return ErrPhoneNotRegistered
 	}
 	return s.otp.Request(ctx, phone)
@@ -89,18 +99,59 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string, ci ClientIn
 		s.audit.Log(ctx, audit.Entry{Action: "auth.otp_failed", Meta: map[string]any{"phone": phone}, IP: ci.IP})
 		return nil, err
 	}
+	selfRegister := ci.Device != nil && ci.Device.App == "living"
+	applicant := func() (*LoginResponse, error) {
+		if !selfRegister {
+			return nil, ErrPhoneNotRegistered
+		}
+		tok, err := s.tokens.IssueApplicant(phone)
+		if err != nil {
+			return nil, err
+		}
+		s.audit.Log(ctx, audit.Entry{Action: "auth.applicant", Meta: map[string]any{"phone_last4": phone[len(phone)-4:]}, IP: ci.IP})
+		return &LoginResponse{ApplicantRequired: true, ApplicantToken: tok}, nil
+	}
 	u, err := s.users.FindByPhone(ctx, phone)
-	if errors.Is(err, user.ErrNotFound) || (err == nil && u.Status != "active") {
-		return nil, ErrPhoneNotRegistered
+	if errors.Is(err, user.ErrNotFound) {
+		return applicant()
 	}
 	if err != nil {
 		return nil, err
+	}
+	if u.Status != "active" {
+		return nil, ErrPhoneNotRegistered
 	}
 	ms, err := s.users.ListActiveMemberships(ctx, u.ID)
 	if err != nil {
 		return nil, err
 	}
+	if len(ms) == 0 {
+		return applicant()
+	}
 	return s.finishLogin(ctx, u, ms, ci, "otp")
+}
+
+// ClaimSession signs in a person whose join request has been approved (they already proved the phone number
+// with an applicant token). It fails with NOT_APPROVED while they still belong to no society.
+func (s *Service) ClaimSession(ctx context.Context, phone string, ci ClientInfo) (*LoginResponse, error) {
+	u, err := s.users.FindByPhone(ctx, phone)
+	if errors.Is(err, user.ErrNotFound) {
+		return nil, ErrNotApproved
+	}
+	if err != nil {
+		return nil, err
+	}
+	if u.Status != "active" {
+		return nil, ErrPhoneNotRegistered
+	}
+	ms, err := s.users.ListActiveMemberships(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(ms) == 0 {
+		return nil, ErrNotApproved
+	}
+	return s.finishLogin(ctx, u, ms, ci, "claim")
 }
 
 // ── Password flow (admin app) ────────────────────────────────────────────────
