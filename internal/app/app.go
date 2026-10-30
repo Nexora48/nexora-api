@@ -240,6 +240,7 @@ func New(d Deps) *App {
 	var saSvc *superadmin.Service
 	if cipher, err := superadmin.NewCipher(d.Cfg.PlatformEncKey); err == nil && d.Cfg.PlatformJWTSecret != "" {
 		saSvc = superadmin.NewService(d.Pool, superadmin.NewTokens(d.Cfg.PlatformJWTSecret, d.Cfg.PlatformAccessTTL), cipher, d.Redis, aud, d.Cfg.PlatformRefreshTTL)
+		saSvc.SetDevFixedMFA(d.Cfg.DevFixedMFA)
 		saSvc.SetFeaturesHook(dispatcher.FeaturesChanged)
 		saSvc.SetNotifier(noteSvc)
 		saSvc.SetHub(hub)

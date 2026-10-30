@@ -27,6 +27,10 @@ import (
 )
 
 func main() {
+	// Staff 2FA accepts 123456 here so the console can be used without an authenticator (override with DEV_FIXED_MFA)
+	if os.Getenv("DEV_FIXED_MFA") == "" {
+		os.Setenv("DEV_FIXED_MFA", "123456")
+	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -110,7 +114,7 @@ func main() {
 		IdleTimeout: 120 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() {
 		log.Info("devserver ready", "addr", cfg.HTTPAddr,
-			"admin", seed.AdminEmail+" / "+seed.AdminPass, "resident_phone", seed.ResidentPhone, "otp", "123456")
+			"admin", seed.AdminEmail+" / "+seed.AdminPass, "resident_phone", seed.ResidentPhone, "otp", "123456", "staff_2fa", "123456")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("server", "err", err)
 			stop()

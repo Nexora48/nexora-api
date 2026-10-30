@@ -2,7 +2,11 @@ package app_test
 
 import (
 	"context"
+	"io"
 	"testing"
+
+	"github.com/Nexora48/nexora-api/internal/app"
+	"github.com/Nexora48/nexora-api/internal/superadmin"
 )
 
 // applicant signs in with the resident app for a number nobody registered, and gets an applicant token.
@@ -330,5 +334,30 @@ func TestTakenFlatsAreMarkedAndCannotBeRequested(t *testing.T) {
 	}
 	if r := call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"code": code, "unit_id": units["A101"], "type": "tenant", "full_name": "A Tenant"}); r.Status != 201 {
 		t.Fatalf("tenant of an owned flat: %d %v", r.Status, r.Body)
+	}
+}
+
+func TestDevFixedMFACodeWorksRepeatedlyAndOnlyWhenSet(t *testing.T) {
+	boss := newStaff(t, superadmin.RoleSuper, true)
+	signIn := func(base, otp string) resp {
+		l := sa2(t, base, "POST", "/auth/login", "", map[string]any{"email": boss.Email, "password": boss.Password})
+		return sa2(t, base, "POST", "/auth/mfa/verify", "", map[string]any{"mfa_token": l.str("mfa_token"), "code": otp})
+	}
+	// the normal instance never accepts a made-up code
+	if r := signIn(srv.URL, "123456"); r.Status == 200 {
+		t.Fatal("123456 must not be a valid 2FA code unless dev mode sets it")
+	}
+	srvFixed, _ := instanceWith(t, io.Discard, nil, func(d *app.Deps) { d.Cfg.DevFixedMFA = "123456" })
+	for i := 0; i < 3; i++ { // reusable: no one-time-use rule for the dev code
+		if r := signIn(srvFixed.URL, "123456"); r.Status != 200 || r.str("access_token") == "" {
+			t.Fatalf("fixed code attempt %d: %d %v", i, r.Status, r.Body)
+		}
+	}
+	if r := signIn(srvFixed.URL, "654321"); r.Status == 200 {
+		t.Fatal("a different wrong code must still be refused")
+	}
+	// the real authenticator code keeps working next to it
+	if r := signIn(srvFixed.URL, code(t, boss.Secret, 0)); r.Status != 200 {
+		t.Fatalf("real code: %d %v", r.Status, r.Body)
 	}
 }
