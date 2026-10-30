@@ -399,3 +399,40 @@ func TestFlatMixPerFloorSetsTypesInOrderAndRestIsDefault(t *testing.T) {
 		t.Fatalf("oversized mix: %d %v", r.Status, r.Body)
 	}
 }
+
+func TestJoinScreensCarryTheFlatType(t *testing.T) {
+	s := newSoc(t)
+	b := call(t, "POST", "/api/v1/society/blocks", s.Admin, map[string]any{"name": "Block T", "code": "T"})
+	bid := b.str("id")
+	call(t, "POST", "/api/v1/society/blocks/"+bid+"/units/bulk", s.Admin, map[string]any{"floors": 1, "units_per_floor": 3, "unit_type": "2BHK",
+		"unit_mix": []any{map[string]any{"unit_type": "3BHK", "count": 1}}})
+	units, _ := callList(t, "/api/v1/society/units?block_id="+bid+"&page_size=10", s.Admin)
+	ids := map[string]string{}
+	for _, u := range units {
+		ids[u["number"].(string)] = u["id"].(string)
+	}
+	code := joinCode(t, s)
+	tok := applicantLogin(t, nextPhone()).str("applicant_token")
+
+	soc := call(t, "GET", "/api/v1/join/society?code="+code, tok, nil)
+	types := map[string]string{}
+	for _, u := range soc.data()["blocks"].([]any)[0].(map[string]any)["units"].([]any) {
+		m := u.(map[string]any)
+		types[m["number"].(string)] = m["unit_type"].(string)
+	}
+	if types["T101"] != "3BHK" || types["T102"] != "2BHK" {
+		t.Fatalf("lookup types: %v", types)
+	}
+	if r := call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"code": code, "unit_id": ids["T101"], "type": "owner", "full_name": "Tee Hundred"}); r.Status != 201 || r.str("flat_type") != "3BHK" {
+		t.Fatalf("request: %d %v", r.Status, r.Body)
+	}
+	rows, _ := callList(t, "/api/v1/society/join-requests?status=pending", s.Admin)
+	if len(rows) != 1 || rows[0]["unit_type"] != "3BHK" {
+		t.Fatalf("office list: %v", rows)
+	}
+	d := call(t, "GET", "/api/v1/society/dashboard", s.Admin, nil)
+	recent := d.obj("join_requests")["recent"].([]any)
+	if len(recent) != 1 || recent[0].(map[string]any)["unit_type"] != "3BHK" {
+		t.Fatalf("dashboard: %v", d.Body)
+	}
+}
