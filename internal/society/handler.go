@@ -2,6 +2,7 @@ package society
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,6 +74,13 @@ type bulkRequest struct {
 	StartFloor    *int   `json:"start_floor" validate:"omitempty,min=0,max=100"`
 	UnitType      string `json:"unit_type" validate:"required,oneof=1BHK 2BHK 3BHK 4BHK Villa Shop Studio"`
 	NumberFormat  string `json:"number_format" validate:"max=40"`
+	// UnitMix sets the first flats of every floor to other types, in order; the rest of the floor uses UnitType.
+	UnitMix []mixItem `json:"unit_mix" validate:"omitempty,max=7,dive"`
+}
+
+type mixItem struct {
+	UnitType string `json:"unit_type" validate:"required,oneof=1BHK 2BHK 3BHK 4BHK Villa Shop Studio"`
+	Count    int    `json:"count" validate:"required,min=1,max=50"`
 }
 
 type unitRequest struct {
@@ -168,9 +176,19 @@ func (h *Handler) BulkUnits(w http.ResponseWriter, r *http.Request) {
 	if req.StartFloor != nil {
 		start = *req.StartFloor
 	}
+	mix := make([]MixItem, len(req.UnitMix))
+	total := 0
+	for i, m := range req.UnitMix {
+		mix[i] = MixItem{UnitType: m.UnitType, Count: m.Count}
+		total += m.Count
+	}
+	if total > req.UnitsPerFloor {
+		httpx.Fail(w, httpx.NewError(http.StatusBadRequest, "VALIDATION", fmt.Sprintf("the mix has %d flats but each floor only has %d", total, req.UnitsPerFloor)))
+		return
+	}
 	res, err := h.repo.BulkCreateUnits(r.Context(), p.SocietyID, b, BulkSpec{
 		Floors: req.Floors, UnitsPerFloor: req.UnitsPerFloor, StartFloor: start,
-		UnitType: req.UnitType, NumberFormat: req.NumberFormat}, dry)
+		UnitType: req.UnitType, NumberFormat: req.NumberFormat, Mix: mix}, dry)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") {
 			httpx.Fail(w, httpx.NewError(http.StatusBadRequest, "VALIDATION", err.Error()))

@@ -54,3 +54,24 @@ func TestValidateRefusesUnsafeProduction(t *testing.T) {
 		t.Errorf("expected a list: %v", err)
 	}
 }
+
+func TestFixedMFACodeIsRefusedOutsideDev(t *testing.T) {
+	for _, env := range []string{"prod", "staging", "test"} {
+		t.Setenv("APP_ENV", env)
+		t.Setenv("DEV_FIXED_MFA", "123456")
+		t.Setenv("JWT_SECRET", strings.Repeat("a", 40))
+		t.Setenv("PLATFORM_JWT_SECRET", strings.Repeat("b", 40))
+		t.Setenv("PLATFORM_ENC_KEY", strings.Repeat("c", 40))
+		if _, err := Load(); err == nil {
+			t.Fatalf("DEV_FIXED_MFA must be refused when APP_ENV=%s", env)
+		}
+	}
+	t.Setenv("APP_ENV", "dev")
+	if c, err := Load(); err != nil || c.DevFixedMFA != "123456" {
+		t.Fatalf("dev: %v %q", err, c.DevFixedMFA)
+	}
+	t.Setenv("DEV_FIXED_MFA", "12ab56")
+	if _, err := Load(); err == nil {
+		t.Fatal("a non-numeric code must be refused")
+	}
+}

@@ -2,7 +2,11 @@ package app_test
 
 import (
 	"context"
+	"io"
 	"testing"
+
+	"github.com/Nexora48/nexora-api/internal/app"
+	"github.com/Nexora48/nexora-api/internal/superadmin"
 )
 
 // applicant signs in with the resident app for a number nobody registered, and gets an applicant token.
@@ -330,5 +334,68 @@ func TestTakenFlatsAreMarkedAndCannotBeRequested(t *testing.T) {
 	}
 	if r := call(t, "POST", "/api/v1/join/requests", tok, map[string]any{"code": code, "unit_id": units["A101"], "type": "tenant", "full_name": "A Tenant"}); r.Status != 201 {
 		t.Fatalf("tenant of an owned flat: %d %v", r.Status, r.Body)
+	}
+}
+
+func TestDevFixedMFACodeWorksRepeatedlyAndOnlyWhenSet(t *testing.T) {
+	boss := newStaff(t, superadmin.RoleSuper, true)
+	signIn := func(base, otp string) resp {
+		l := sa2(t, base, "POST", "/auth/login", "", map[string]any{"email": boss.Email, "password": boss.Password})
+		return sa2(t, base, "POST", "/auth/mfa/verify", "", map[string]any{"mfa_token": l.str("mfa_token"), "code": otp})
+	}
+	// the normal instance never accepts a made-up code
+	if r := signIn(srv.URL, "123456"); r.Status == 200 {
+		t.Fatal("123456 must not be a valid 2FA code unless dev mode sets it")
+	}
+	srvFixed, _ := instanceWith(t, io.Discard, nil, func(d *app.Deps) { d.Cfg.DevFixedMFA = "123456" })
+	for i := 0; i < 3; i++ { // reusable: no one-time-use rule for the dev code
+		if r := signIn(srvFixed.URL, "123456"); r.Status != 200 || r.str("access_token") == "" {
+			t.Fatalf("fixed code attempt %d: %d %v", i, r.Status, r.Body)
+		}
+	}
+	if r := signIn(srvFixed.URL, "654321"); r.Status == 200 {
+		t.Fatal("a different wrong code must still be refused")
+	}
+	// the real authenticator code keeps working next to it
+	if r := signIn(srvFixed.URL, code(t, boss.Secret, 0)); r.Status != 200 {
+		t.Fatalf("real code: %d %v", r.Status, r.Body)
+	}
+}
+
+func TestFlatMixPerFloorSetsTypesInOrderAndRestIsDefault(t *testing.T) {
+	s := newSoc(t)
+	b := call(t, "POST", "/api/v1/society/blocks", s.Admin, map[string]any{"name": "Block M", "code": "M"})
+	bid := b.str("id")
+	url := "/api/v1/society/blocks/" + bid + "/units/bulk"
+	req := map[string]any{"floors": 5, "units_per_floor": 10, "unit_type": "2BHK",
+		"unit_mix": []any{map[string]any{"unit_type": "1BHK", "count": 2}, map[string]any{"unit_type": "3BHK", "count": 2}}}
+
+	// the preview reports the split without writing anything
+	dry := call(t, "POST", url+"?dry_run=true", s.Admin, req)
+	by, _ := dry.data()["by_type"].(map[string]any)
+	if dry.Status != 200 || by["1BHK"] != float64(10) || by["3BHK"] != float64(10) || by["2BHK"] != float64(30) {
+		t.Fatalf("dry run: %d %v", dry.Status, dry.Body)
+	}
+	if units, _ := callList(t, "/api/v1/society/units?block_id="+bid+"&page_size=100", s.Admin); len(units) != 0 {
+		t.Fatalf("a dry run must not create flats: %d", len(units))
+	}
+	if r := call(t, "POST", url, s.Admin, req); r.Status != 201 || num(r.data(), "created") != 50 {
+		t.Fatalf("create: %d %v", r.Status, r.Body)
+	}
+	units, _ := callList(t, "/api/v1/society/units?block_id="+bid+"&page_size=100", s.Admin)
+	got := map[string]string{}
+	for _, u := range units {
+		got[u["number"].(string)] = u["unit_type"].(string)
+	}
+	// numbers are floor*100+seq by default: x01, x02 = 1BHK, x03, x04 = 3BHK, x05-x10 = 2BHK
+	for _, c := range []struct{ n, typ string }{{"M101", "1BHK"}, {"M102", "1BHK"}, {"M103", "3BHK"}, {"M104", "3BHK"}, {"M105", "2BHK"}, {"M110", "2BHK"}, {"M501", "1BHK"}, {"M504", "3BHK"}, {"M510", "2BHK"}} {
+		if got[c.n] != c.typ {
+			t.Errorf("%s: want %s, got %q (all: %v)", c.n, c.typ, got[c.n], got)
+		}
+	}
+	// a mix bigger than the floor is refused; no mix still means every flat uses the default type
+	bad := map[string]any{"floors": 1, "units_per_floor": 3, "unit_type": "2BHK", "unit_mix": []any{map[string]any{"unit_type": "1BHK", "count": 4}}}
+	if r := call(t, "POST", url, s.Admin, bad); r.Status != 400 {
+		t.Fatalf("oversized mix: %d %v", r.Status, r.Body)
 	}
 }

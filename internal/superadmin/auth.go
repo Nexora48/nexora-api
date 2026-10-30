@@ -3,6 +3,7 @@ package superadmin
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -59,20 +60,21 @@ type SessionResult struct {
 }
 
 type Service struct {
-	store      *store
-	tokens     *Tokens
-	cipher     *Cipher
-	rdb        *redis.Client
-	audit      *audit.Logger
-	refreshTTL time.Duration
-	onFeatures func(context.Context, uuid.UUID)
-	notifier   *notify.Service
-	batch      int
-	version    string
-	backupFile string
-	mailer     nxmail.Sender
-	consoleURL string
-	hub        interface{ Count() int }
+	devFixedMFA string // dev only (see config.DevFixedMFA); empty everywhere else
+	store       *store
+	tokens      *Tokens
+	cipher      *Cipher
+	rdb         *redis.Client
+	audit       *audit.Logger
+	refreshTTL  time.Duration
+	onFeatures  func(context.Context, uuid.UUID)
+	notifier    *notify.Service
+	batch       int
+	version     string
+	backupFile  string
+	mailer      nxmail.Sender
+	consoleURL  string
+	hub         interface{ Count() int }
 }
 
 // SetFeaturesHook is called after service switches change (apps are told to reload them).
@@ -81,6 +83,9 @@ func (s *Service) SetFeaturesHook(f func(context.Context, uuid.UUID)) { s.onFeat
 func NewService(pool storePool, tokens *Tokens, cipher *Cipher, rdb *redis.Client, a *audit.Logger, refreshTTL time.Duration) *Service {
 	return &Service{store: &store{pool: pool}, tokens: tokens, cipher: cipher, rdb: rdb, audit: a, refreshTTL: refreshTTL}
 }
+
+// SetDevFixedMFA makes one 6-digit code valid for every staff 2FA prompt. Dev only: config refuses it elsewhere.
+func (s *Service) SetDevFixedMFA(code string) { s.devFixedMFA = code }
 
 func toDTO(u *staff) UserDTO {
 	return UserDTO{ID: u.ID.String(), Email: u.Email, FullName: u.FullName, Role: u.Role}
@@ -186,17 +191,20 @@ func (s *Service) VerifyMFA(ctx context.Context, mfaToken, code, recovery, ip, u
 		if err != nil {
 			return nil, err
 		}
-		step, ok := MatchTOTP(secret, strings.TrimSpace(code), time.Now())
-		if !ok {
-			return fail()
-		}
-		// a code is valid once
-		fresh, err := s.rdb.SetNX(ctx, fmt.Sprintf("platform:totp:used:%s:%d", u.ID, step), 1, 3*time.Minute).Result()
-		if err != nil {
-			return nil, err
-		}
-		if !fresh {
-			return fail()
+		fixed := s.devFixedMFA != "" && subtle.ConstantTimeCompare([]byte(s.devFixedMFA), []byte(strings.TrimSpace(code))) == 1
+		if !fixed {
+			step, ok := MatchTOTP(secret, strings.TrimSpace(code), time.Now())
+			if !ok {
+				return fail()
+			}
+			// a code is valid once
+			fresh, err := s.rdb.SetNX(ctx, fmt.Sprintf("platform:totp:used:%s:%d", u.ID, step), 1, 3*time.Minute).Result()
+			if err != nil {
+				return nil, err
+			}
+			if !fresh {
+				return fail()
+			}
 		}
 		if !u.TOTPEnabled { // enrolment confirmed
 			if err := s.store.setTOTP(ctx, u.ID, *u.TOTPSecretEnc, true); err != nil {

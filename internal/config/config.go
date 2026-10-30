@@ -23,6 +23,7 @@ type Config struct {
 	// SuperAdmin (platform) console
 	PlatformJWTSecret    string
 	PlatformEncKey       string
+	DevFixedMFA          string // APP_ENV=dev only: this 6-digit code is accepted for every staff 2FA prompt
 	PlatformAllowedCIDRs []string
 	PlatformAccessTTL    time.Duration
 	PlatformRefreshTTL   time.Duration
@@ -160,6 +161,16 @@ func Load() (Config, error) {
 	}
 	cfg.PlatformJWTSecret = get("PLATFORM_JWT_SECRET", "")
 	cfg.PlatformEncKey = get("PLATFORM_ENC_KEY", "")
+	if v := os.Getenv("DEV_FIXED_MFA"); v != "" {
+		// a known 2FA code would defeat the second factor, so it can never be switched on outside APP_ENV=dev
+		if cfg.Env != "dev" {
+			return cfg, fmt.Errorf("DEV_FIXED_MFA is only allowed when APP_ENV=dev")
+		}
+		if len(v) != 6 || strings.Trim(v, "0123456789") != "" {
+			return cfg, fmt.Errorf("DEV_FIXED_MFA must be exactly 6 digits")
+		}
+		cfg.DevFixedMFA = v
+	}
 	cfg.PlatformAccessTTL = 15 * time.Minute
 	cfg.PlatformRefreshTTL = 7 * 24 * time.Hour
 	if v := os.Getenv("PLATFORM_ALLOWED_CIDRS"); v != "" {
