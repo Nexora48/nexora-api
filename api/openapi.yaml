@@ -69,7 +69,7 @@ paths:
     delete: { summary: "Delete block. 409 BLOCK_NOT_EMPTY if it has residents/history", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Deleted } } }
   /api/v1/society/blocks/{id}/units/bulk:
     post:
-      summary: "Generate flats floors x units_per_floor (start_floor default 1; number_format tokens {block} {floor} {seq} {seq:02} {seq:03}). ?dry_run=true previews."
+      summary: "Generate flats floors x units_per_floor (start_floor default 1; number_format tokens {block} {floor} {seq} {seq:02} {seq:03}). Optional unit_mix [{unit_type,count}] sets the first flats of every floor to other types in order; the rest use unit_type (mix total must not exceed units_per_floor). The response has by_type counts. ?dry_run=true previews."
       security: [{ bearer: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [floors, units_per_floor, unit_type], properties: { floors: { type: integer }, units_per_floor: { type: integer }, start_floor: { type: integer }, unit_type: { type: string, enum: [1BHK, 2BHK, 3BHK, 4BHK, Villa, Shop, Studio] }, number_format: { type: string } } } } } }

@@ -124,12 +124,33 @@ type BulkSpec struct {
 	StartFloor    int
 	UnitType      string
 	NumberFormat  string // tokens: {block} {floor} {seq} {seq:02} {seq:03}
+	Mix           []MixItem
+}
+
+// MixItem sets Count flats per floor to UnitType; the mix applies from the first flat of the floor on.
+type MixItem struct {
+	UnitType string
+	Count    int
+}
+
+// typeAt is the type of the seq-th flat (1-based) on a floor: the mix in order, then the default.
+func (s BulkSpec) typeAt(seq int) string {
+	left := seq
+	for _, m := range s.Mix {
+		if left <= m.Count {
+			return m.UnitType
+		}
+		left -= m.Count
+	}
+	return s.UnitType
 }
 
 type BulkResult struct {
 	Numbers []string `json:"numbers"`
 	Created int      `json:"created"`
 	Skipped []string `json:"skipped_existing"`
+	// ByType is how many flats of each type this run creates (or would create, in a dry run).
+	ByType map[string]int `json:"by_type"`
 	// SkippedLimit lists numbers that were not created because the plan's flat limit was reached.
 	SkippedLimit []string `json:"skipped_plan_limit"`
 }
@@ -145,10 +166,11 @@ func formatNumber(format, block string, floor, seq int) string {
 
 // BulkCreateUnits generates units for a block. With dryRun nothing is written.
 func (r *Repository) BulkCreateUnits(ctx context.Context, societyID uuid.UUID, block *Block, spec BulkSpec, dryRun bool) (*BulkResult, error) {
-	res := &BulkResult{Numbers: []string{}, Skipped: []string{}, SkippedLimit: []string{}}
+	res := &BulkResult{Numbers: []string{}, Skipped: []string{}, SkippedLimit: []string{}, ByType: map[string]int{}}
 	type item struct {
 		floor  int
 		number string
+		typ    string
 	}
 	var items []item
 	seen := map[string]bool{}
@@ -160,7 +182,7 @@ func (r *Repository) BulkCreateUnits(ctx context.Context, societyID uuid.UUID, b
 				return nil, fmt.Errorf("number format produces duplicate %q", n)
 			}
 			seen[n] = true
-			items = append(items, item{floor, n})
+			items = append(items, item{floor, n, spec.typeAt(s)})
 			res.Numbers = append(res.Numbers, n)
 		}
 	}
@@ -207,11 +229,12 @@ func (r *Repository) BulkCreateUnits(ctx context.Context, societyID uuid.UUID, b
 		}
 		if !dryRun {
 			if _, err := tx.Exec(ctx, `INSERT INTO units (society_id, block_id, floor, number, unit_type) VALUES ($1,$2,$3,$4,$5)`,
-				societyID, block.ID, it.floor, it.number, spec.UnitType); err != nil {
+				societyID, block.ID, it.floor, it.number, it.typ); err != nil {
 				return nil, err
 			}
 		}
 		res.Created++
+		res.ByType[it.typ]++
 	}
 	if dryRun {
 		return res, nil

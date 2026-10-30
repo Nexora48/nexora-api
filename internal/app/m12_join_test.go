@@ -332,3 +332,41 @@ func TestTakenFlatsAreMarkedAndCannotBeRequested(t *testing.T) {
 		t.Fatalf("tenant of an owned flat: %d %v", r.Status, r.Body)
 	}
 }
+
+func TestFlatMixPerFloorSetsTypesInOrderAndRestIsDefault(t *testing.T) {
+	s := newSoc(t)
+	b := call(t, "POST", "/api/v1/society/blocks", s.Admin, map[string]any{"name": "Block M", "code": "M"})
+	bid := b.str("id")
+	url := "/api/v1/society/blocks/" + bid + "/units/bulk"
+	req := map[string]any{"floors": 5, "units_per_floor": 10, "unit_type": "2BHK",
+		"unit_mix": []any{map[string]any{"unit_type": "1BHK", "count": 2}, map[string]any{"unit_type": "3BHK", "count": 2}}}
+
+	// the preview reports the split without writing anything
+	dry := call(t, "POST", url+"?dry_run=true", s.Admin, req)
+	by, _ := dry.data()["by_type"].(map[string]any)
+	if dry.Status != 200 || by["1BHK"] != float64(10) || by["3BHK"] != float64(10) || by["2BHK"] != float64(30) {
+		t.Fatalf("dry run: %d %v", dry.Status, dry.Body)
+	}
+	if units, _ := callList(t, "/api/v1/society/units?block_id="+bid+"&page_size=100", s.Admin); len(units) != 0 {
+		t.Fatalf("a dry run must not create flats: %d", len(units))
+	}
+	if r := call(t, "POST", url, s.Admin, req); r.Status != 201 || num(r.data(), "created") != 50 {
+		t.Fatalf("create: %d %v", r.Status, r.Body)
+	}
+	units, _ := callList(t, "/api/v1/society/units?block_id="+bid+"&page_size=100", s.Admin)
+	got := map[string]string{}
+	for _, u := range units {
+		got[u["number"].(string)] = u["unit_type"].(string)
+	}
+	// numbers are floor*100+seq by default: x01, x02 = 1BHK, x03, x04 = 3BHK, x05-x10 = 2BHK
+	for _, c := range []struct{ n, typ string }{{"M101", "1BHK"}, {"M102", "1BHK"}, {"M103", "3BHK"}, {"M104", "3BHK"}, {"M105", "2BHK"}, {"M110", "2BHK"}, {"M501", "1BHK"}, {"M504", "3BHK"}, {"M510", "2BHK"}} {
+		if got[c.n] != c.typ {
+			t.Errorf("%s: want %s, got %q (all: %v)", c.n, c.typ, got[c.n], got)
+		}
+	}
+	// a mix bigger than the floor is refused; no mix still means every flat uses the default type
+	bad := map[string]any{"floors": 1, "units_per_floor": 3, "unit_type": "2BHK", "unit_mix": []any{map[string]any{"unit_type": "1BHK", "count": 4}}}
+	if r := call(t, "POST", url, s.Admin, bad); r.Status != 400 {
+		t.Fatalf("oversized mix: %d %v", r.Status, r.Body)
+	}
+}
