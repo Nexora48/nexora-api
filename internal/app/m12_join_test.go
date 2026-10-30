@@ -359,6 +359,8 @@ func TestDevFixedMFACodeWorksRepeatedlyAndOnlyWhenSet(t *testing.T) {
 	// the real authenticator code keeps working next to it
 	if r := signIn(srvFixed.URL, code(t, boss.Secret, 0)); r.Status != 200 {
 		t.Fatalf("real code: %d %v", r.Status, r.Body)
+	}
+}
 
 func TestFlatMixPerFloorSetsTypesInOrderAndRestIsDefault(t *testing.T) {
 	s := newSoc(t)
