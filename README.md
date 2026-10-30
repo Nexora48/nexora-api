@@ -4,6 +4,7 @@ Go backend (modular monolith) for the Nexora residential platform. See `../DEVEL
 ## Run without Docker (recommended for app development)
 ```bash
 make dev        # embedded Postgres + in-memory Redis + migrations + seed  → http://localhost:8080
+                # data lives in .data/pg and survives restarts; `make dev-fresh` wipes it and re-seeds
 ```
 Seed logins: admin `admin@sunrise.test` / `Admin@123`; resident phone `9999999999`, OTP `123456` (dev only).
 

@@ -1,8 +1,9 @@
 DB_URL ?= postgres://nexora:nexora@localhost:5432/nexora?sslmode=disable
 
-.PHONY: dev up down run build test test-rls test-pool1 test-load test-short lint migrate-up migrate-down seed
+.PHONY: dev dev-fresh up down run build test test-rls test-pool1 test-load test-short lint migrate-up migrate-down seed
 totp:         ; go run ./cmd/totp   # current 2FA codes for the seeded console staff
-dev:          ; go run ./cmd/devserver   # no Docker: embedded Postgres + in-memory Redis + seed
+dev:          ; go run ./cmd/devserver   # no Docker: embedded Postgres (kept in .data/pg between runs) + in-memory Redis + seed on first run
+dev-fresh:    ; DEV_FRESH=1 go run ./cmd/devserver   # same, but wipe .data/pg first (back to the seed data)
 up:           ; docker compose -f deployments/docker-compose.yml up -d
 down:         ; docker compose -f deployments/docker-compose.yml down
 run:          ; go run ./cmd/api
