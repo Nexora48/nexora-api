@@ -95,6 +95,7 @@ type JoinRequest struct {
 	FullName  string    `json:"full_name"`
 	Phone     string    `json:"phone"`
 	Flat      string    `json:"flat"`
+	UnitType  string    `json:"unit_type"`
 	Type      string    `json:"type"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -147,7 +148,7 @@ func (s *Service) Summary(ctx context.Context, p authctx.Principal) (*Summary, e
 	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM join_requests WHERE society_id=$1 AND status='pending'`, p.SocietyID).Scan(&out.JoinRequests.Pending); err != nil {
 		return nil, err
 	}
-	jr, err := s.pool.Query(ctx, `SELECT r.id, r.full_name, r.phone, b.code || '-' || un.number, r.requested_type, r.created_at
+	jr, err := s.pool.Query(ctx, `SELECT r.id, r.full_name, r.phone, b.code || '-' || un.number, un.unit_type, r.requested_type, r.created_at
 		FROM join_requests r JOIN units un ON un.id=r.unit_id JOIN blocks b ON b.id=un.block_id
 		WHERE r.society_id=$1 AND r.status='pending' ORDER BY r.created_at LIMIT 5`, p.SocietyID)
 	if err != nil {
@@ -155,7 +156,7 @@ func (s *Service) Summary(ctx context.Context, p authctx.Principal) (*Summary, e
 	}
 	for jr.Next() {
 		var x JoinRequest
-		if err := jr.Scan(&x.ID, &x.FullName, &x.Phone, &x.Flat, &x.Type, &x.CreatedAt); err != nil {
+		if err := jr.Scan(&x.ID, &x.FullName, &x.Phone, &x.Flat, &x.UnitType, &x.Type, &x.CreatedAt); err != nil {
 			jr.Close()
 			return nil, err
 		}

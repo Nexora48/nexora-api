@@ -55,6 +55,7 @@ func New(pool *pgxpool.Pool, res *resident.Service, notes *notify.Service, a *au
 type Unit struct {
 	ID          uuid.UUID `json:"id"`
 	Number      string    `json:"number"`
+	UnitType    string    `json:"unit_type"`    // 1BHK, 2BHK, ...
 	OwnerTaken  bool      `json:"owner_taken"`  // the flat already has its owner
 	TenantTaken bool      `json:"tenant_taken"` // the flat already has its tenant
 }
@@ -127,7 +128,7 @@ func (s *Service) Lookup(ctx context.Context, code, id string) (*Society, error)
 	if !on {
 		return nil, ErrJoinOff
 	}
-	rows, err := s.pool.Query(ctx, `SELECT b.code, b.name, u.id, u.number,
+	rows, err := s.pool.Query(ctx, `SELECT b.code, b.name, u.id, u.number, u.unit_type,
 		EXISTS (SELECT 1 FROM memberships m WHERE m.unit_id=u.id AND m.role_key='resident_owner' AND m.status IN ('active','suspended')),
 		EXISTS (SELECT 1 FROM memberships m WHERE m.unit_id=u.id AND m.role_key='resident_tenant' AND m.status IN ('active','suspended'))
 		FROM blocks b JOIN units u ON u.block_id=b.id WHERE b.society_id=$1 ORDER BY b.sort_order, b.code, u.floor, u.number`, so.ID)
@@ -137,17 +138,17 @@ func (s *Service) Lookup(ctx context.Context, code, id string) (*Society, error)
 	defer rows.Close()
 	so.Blocks = []Block{}
 	for rows.Next() {
-		var bc, bn, num string
+		var bc, bn, num, ut string
 		var id uuid.UUID
 		var ot, tt bool
-		if err := rows.Scan(&bc, &bn, &id, &num, &ot, &tt); err != nil {
+		if err := rows.Scan(&bc, &bn, &id, &num, &ut, &ot, &tt); err != nil {
 			return nil, err
 		}
 		if n := len(so.Blocks); n == 0 || so.Blocks[n-1].Code != bc {
 			so.Blocks = append(so.Blocks, Block{Code: bc, Name: bn, Units: []Unit{}})
 		}
 		b := &so.Blocks[len(so.Blocks)-1]
-		b.Units = append(b.Units, Unit{ID: id, Number: num, OwnerTaken: ot, TenantTaken: tt})
+		b.Units = append(b.Units, Unit{ID: id, Number: num, UnitType: ut, OwnerTaken: ot, TenantTaken: tt})
 	}
 	return &so, rows.Err()
 }
@@ -227,6 +228,7 @@ type Status struct {
 	ID          *uuid.UUID `json:"id,omitempty"`
 	Society     string     `json:"society,omitempty"`
 	Flat        string     `json:"flat,omitempty"`
+	FlatType    string     `json:"flat_type,omitempty"`
 	Type        string     `json:"type,omitempty"`
 	FullName    string     `json:"full_name,omitempty"`
 	Reason      string     `json:"reason,omitempty"`
@@ -247,10 +249,10 @@ func (s *Service) statusOf(ctx context.Context, phone string) (*Status, error) {
 	var id uuid.UUID
 	var reason *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT r.id, r.status, so.name, b.code || '-' || u.number, r.requested_type, r.full_name, r.reason, r.created_at, r.decided_at
+		SELECT r.id, r.status, so.name, b.code || '-' || u.number, u.unit_type, r.requested_type, r.full_name, r.reason, r.created_at, r.decided_at
 		FROM join_requests r JOIN societies so ON so.id=r.society_id JOIN units u ON u.id=r.unit_id JOIN blocks b ON b.id=u.block_id
 		WHERE r.phone=$1 AND r.status <> 'cancelled' ORDER BY r.created_at DESC LIMIT 1`, phone).
-		Scan(&id, &st.State, &st.Society, &st.Flat, &st.Type, &st.FullName, &reason, &st.RequestedAt, &st.DecidedAt)
+		Scan(&id, &st.State, &st.Society, &st.Flat, &st.FlatType, &st.Type, &st.FullName, &reason, &st.RequestedAt, &st.DecidedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return st, nil
 	}
@@ -277,6 +279,7 @@ type Row struct {
 	FullName  string     `json:"full_name"`
 	Phone     string     `json:"phone"`
 	Flat      string     `json:"flat"`
+	UnitType  string     `json:"unit_type"`
 	UnitID    uuid.UUID  `json:"unit_id"`
 	Type      string     `json:"type"`
 	Status    string     `json:"status"`
@@ -289,7 +292,7 @@ type Row struct {
 // List shows the society's requests; status is pending, approved, rejected or "" for all.
 func (s *Service) List(ctx context.Context, soc uuid.UUID, status string, limit, offset int) ([]Row, int, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT r.id, r.full_name, r.phone, b.code || '-' || u.number, r.unit_id, r.requested_type, r.status, COALESCE(r.reason,''), r.created_at, r.decided_at, du.full_name, count(*) OVER()
+		SELECT r.id, r.full_name, r.phone, b.code || '-' || u.number, u.unit_type, r.unit_id, r.requested_type, r.status, COALESCE(r.reason,''), r.created_at, r.decided_at, du.full_name, count(*) OVER()
 		FROM join_requests r JOIN units u ON u.id=r.unit_id JOIN blocks b ON b.id=u.block_id
 		LEFT JOIN memberships dm ON dm.id=r.decided_by LEFT JOIN users du ON du.id=dm.user_id
 		WHERE r.society_id=$1 AND r.status <> 'cancelled' AND ($2 = '' OR r.status = $2)
@@ -302,7 +305,7 @@ func (s *Service) List(ctx context.Context, soc uuid.UUID, status string, limit,
 	total := 0
 	for rows.Next() {
 		var r Row
-		if err := rows.Scan(&r.ID, &r.FullName, &r.Phone, &r.Flat, &r.UnitID, &r.Type, &r.Status, &r.Reason, &r.CreatedAt, &r.DecidedAt, &r.DecidedBy, &total); err != nil {
+		if err := rows.Scan(&r.ID, &r.FullName, &r.Phone, &r.Flat, &r.UnitType, &r.UnitID, &r.Type, &r.Status, &r.Reason, &r.CreatedAt, &r.DecidedAt, &r.DecidedBy, &total); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, r)
