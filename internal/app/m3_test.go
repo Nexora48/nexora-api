@@ -299,10 +299,11 @@ func TestOnboardingAndForcedPasswordChange(t *testing.T) {
 	if len(temp) < 8 || cred["existing_account"] != false || soc["status"] != "active" {
 		t.Fatalf("credentials/society: %v", r.Body)
 	}
-	if feats, _ := soc["features"].([]any); len(feats) != 10 {
-		t.Fatalf("all services should exist (default on): %d", len(feats))
+	// 11 services exist; the ten original ones are on by default, Parking (added later) is off until turned on
+	if feats, _ := soc["features"].([]any); len(feats) != 11 {
+		t.Fatalf("all services should exist: %d", len(feats))
 	}
-	if soc["enabled_services"] != float64(10) || soc["total_services"] != float64(10) {
+	if soc["enabled_services"] != float64(10) || soc["total_services"] != float64(11) {
 		t.Fatalf("service counts: %v", soc)
 	}
 	// duplicate explicit slug
@@ -650,7 +651,7 @@ func TestSocietyListDetailEditStats(t *testing.T) {
 		t.Fatalf("stats: %v", st.Body)
 	}
 	cat := sa(t, "GET", "/features", tok, nil)
-	if got, _ := cat.Body["data"].([]any); len(got) != 10 {
+	if got, _ := cat.Body["data"].([]any); len(got) != 11 { // ten original services + Parking
 		t.Fatalf("catalogue: %v", cat.Body)
 	}
 	// audit filters
