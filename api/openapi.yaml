@@ -600,6 +600,22 @@ paths:
     get: { summary: "Platform: minimum and latest version per app", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/superadmin/app-versions/{app}:
     put: { summary: "Platform (super_admin): {min_version, latest_version, message, store_url}", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/me/parking:
+    get: { summary: "The parking slots allocated to my flat (area, number, kind). Feature: parking, permission parking.read", security: [{ bearer: [] }], responses: { "200": { description: OK }, "403": { description: FEATURE_DISABLED } } }
+  /api/v1/society/parking/slots:
+    get: { summary: "Office: parking slots; status=free|allocated, kind=car|bike|visitor, q, page. Feature: parking, permission parking.manage (society admin only)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post: { summary: "Office: create a slot {area, number, kind, note}. 409 SLOT_EXISTS when the area and number are taken", security: [{ bearer: [] }], responses: { "201": { description: Created } } }
+  /api/v1/society/parking/slots/bulk:
+    post: { summary: "Office: create numbered slots {area, prefix, from, to (max 200), kind}; existing numbers are skipped", security: [{ bearer: [] }], responses: { "201": { description: "{created, skipped}" } } }
+  /api/v1/society/parking/summary:
+    get: { summary: "Office: counts (total, allocated, free, cars, bikes, visitor)", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /api/v1/society/parking/slots/{id}:
+    put: { summary: "Office: edit a slot", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+    delete: { summary: "Office: delete a slot that is not allocated (409 SLOT_ALLOCATED otherwise)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Deleted } } }
+  /api/v1/society/parking/slots/{id}/allocate:
+    post: { summary: "Office: allocate (or move) a slot to a flat {unit_id}. Visitor slots cannot be allocated (409 SLOT_VISITOR). The flat is told in its inbox", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/society/parking/slots/{id}/release:
+    post: { summary: "Office: take a slot back from its flat", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:

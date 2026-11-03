@@ -11,6 +11,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/join"
 	"github.com/Nexora48/nexora-api/internal/limits"
 	"github.com/Nexora48/nexora-api/internal/mail"
+	"github.com/Nexora48/nexora-api/internal/parking"
 	"github.com/Nexora48/nexora-api/internal/payment"
 	"github.com/Nexora48/nexora-api/internal/platform/metrics"
 	"github.com/Nexora48/nexora-api/internal/usage"
@@ -184,6 +185,7 @@ func New(d Deps) *App {
 	}
 	amenitySvc := amenity.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.AmenityReminder)
 	amenityH := amenity.NewHandler(amenitySvc, files)
+	parkingH := parking.NewHandler(parking.NewService(d.Pool, aud, noteSvc))
 	helperSvc := helper.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
 	helperH := helper.NewHandler(helperSvc, files)
 	attendSvc := attendance.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
@@ -330,6 +332,7 @@ func New(d Deps) *App {
 				r.With(middleware.RequireFeature(feats, "deliveries"), need("visitor.approve")).Get("/delivery-rules", deliveryH.Rules)
 				r.With(middleware.RequireFeature(feats, "deliveries"), need("visitor.approve")).Put("/delivery-rules", deliveryH.SetRule)
 				r.With(middleware.RequireFeature(feats, "sos"), need("sos.trigger")).Get("/sos", sosH.Mine)
+				r.With(middleware.RequireFeature(feats, "parking"), need("parking.read")).Get("/parking", parkingH.Mine)
 				r.Delete("/devices/{id}", meH.UnregisterDevice)
 				r.With(need("profile.manage")).Put("/profile", householdH.UpdateProfile)
 				r.With(need("profile.manage")).Get("/emergency-contact", householdH.GetEmergency)
@@ -511,6 +514,17 @@ func New(d Deps) *App {
 				r.Post("/complaints/{id}/priority", complaintH.SetPriority)
 				r.Post("/complaints/{id}/comments", complaintH.OfficeComment)
 				r.Get("/office-members", complaintH.OfficeMembers)
+			})
+			r.Group(func(r chi.Router) { // parking desk: only the society admin allocates slots
+				r.Use(protect("parking.manage", "parking")...)
+				r.Get("/parking/slots", parkingH.List)
+				r.Get("/parking/summary", parkingH.Summary)
+				r.Post("/parking/slots", parkingH.Create)
+				r.With(heavy).Post("/parking/slots/bulk", parkingH.Bulk)
+				r.Put("/parking/slots/{id}", parkingH.Update)
+				r.Delete("/parking/slots/{id}", parkingH.Delete)
+				r.Post("/parking/slots/{id}/allocate", parkingH.Allocate)
+				r.Post("/parking/slots/{id}/release", parkingH.Release)
 			})
 			r.Group(func(r chi.Router) { // amenities desk
 				r.Use(protect("amenity.manage", "amenities")...)
