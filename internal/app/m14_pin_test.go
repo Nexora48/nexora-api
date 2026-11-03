@@ -61,7 +61,7 @@ func TestPINRulesAndLockout(t *testing.T) {
 	// wrong tries count down, a right one resets the counter
 	for i, left := range []string{"4", "3"} {
 		r := call(t, "POST", pinPath+"/verify", c.rA, map[string]any{"device_id": dev, "pin": "1357"})
-		if r.Status != 401 || r.errCode() != "PIN_INVALID" || !contains(r.Body, left+" tries left") {
+		if r.Status != 403 || r.errCode() != "PIN_INVALID" || !contains(r.Body, left+" tries left") {
 			t.Fatalf("wrong #%d: %d %v", i, r.Status, r.Body)
 		}
 	}
@@ -69,7 +69,7 @@ func TestPINRulesAndLockout(t *testing.T) {
 		t.Fatalf("right after wrong: %d", r.Status)
 	}
 	r := call(t, "POST", pinPath+"/verify", c.rA, map[string]any{"device_id": dev, "pin": "1357"})
-	if r.Status != 401 || !contains(r.Body, "4 tries left") {
+	if r.Status != 403 || !contains(r.Body, "4 tries left") {
 		t.Fatalf("counter was not reset: %d %v", r.Status, r.Body)
 	}
 
@@ -89,7 +89,7 @@ func TestPINRulesAndLockout(t *testing.T) {
 	if r := call(t, "PUT", pinPath, c.rA, map[string]any{"device_id": dev, "pin": "7413"}); r.Status != 204 {
 		t.Fatalf("replace: %d", r.Status)
 	}
-	if r := call(t, "POST", pinPath+"/verify", c.rA, map[string]any{"device_id": dev, "pin": "2580"}); r.Status != 401 {
+	if r := call(t, "POST", pinPath+"/verify", c.rA, map[string]any{"device_id": dev, "pin": "2580"}); r.Status != 403 {
 		t.Fatalf("old PIN must stop working: %d", r.Status)
 	}
 	if r := call(t, "DELETE", pinPath+"?device_id="+dev, c.rA, nil); r.Status != 204 {

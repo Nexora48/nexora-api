@@ -151,7 +151,7 @@ func (s *PinService) Verify(ctx context.Context, p authctx.Principal, device, pi
 	if left == 1 {
 		msg = "Wrong PIN. 1 try left."
 	}
-	return httpx.NewError(http.StatusUnauthorized, "PIN_INVALID", msg)
+	return httpx.NewError(http.StatusForbidden, "PIN_INVALID", msg)
 }
 
 // Forget removes the PIN of this device (sign-out or "forgot PIN").
