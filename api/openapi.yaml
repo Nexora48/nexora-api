@@ -616,6 +616,12 @@ paths:
     post: { summary: "Office: allocate (or move) a slot to a flat {unit_id}. Visitor slots cannot be allocated (409 SLOT_VISITOR). The flat is told in its inbox", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
   /api/v1/society/parking/slots/{id}/release:
     post: { summary: "Office: take a slot back from its flat", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK } } }
+  /api/v1/me/pin:
+    get: { summary: "Does this device have an app PIN? ?device_id= -> {has_pin}", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { summary: "Set or replace the 4-6 digit app PIN of this device {device_id, pin}. PIN_WEAK (400) for all-same or straight-run PINs", security: [{ bearer: [] }], responses: { "204": { description: Set } } }
+    delete: { summary: "Forget the PIN of this device (sign-out or forgot PIN). ?device_id=", security: [{ bearer: [] }], responses: { "204": { description: Removed } } }
+  /api/v1/me/pin/verify:
+    post: { summary: "Check the app PIN {device_id, pin}. 401 PIN_INVALID says the tries left; the 5th wrong try removes the PIN, ends the device's sessions and answers 423 PIN_LOCKED (sign in with OTP again)", security: [{ bearer: [] }], responses: { "204": { description: Correct }, "401": { description: PIN_INVALID }, "404": { description: PIN_NOT_SET }, "423": { description: PIN_LOCKED } } }
 components:
   securitySchemes: { bearer: { type: http, scheme: bearer, bearerFormat: JWT }, platform: { type: http, scheme: bearer, bearerFormat: JWT, description: Platform staff token (separate audience and secret) } }
   schemas:

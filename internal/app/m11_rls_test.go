@@ -19,7 +19,7 @@ import (
 
 // tables that deliberately have no row-level security: global catalogues and per-user data (see migration 000051)
 var rlsExempt = map[string]bool{
-	"users": true, "devices": true, "refresh_tokens": true, "notification_prefs": true, "notification_outbox": true,
+	"users": true, "devices": true, "refresh_tokens": true, "user_pins": true, "notification_prefs": true, "notification_outbox": true,
 	"emergency_contacts": true, "roles": true, "permissions": true, "role_permissions": true, "features": true,
 	"plans": true, "app_versions": true, "audit_settings": true, "schema_migrations": true,
 	"platform_users": true, "platform_recovery_codes": true, "platform_refresh_tokens": true, "platform_broadcasts": true,
