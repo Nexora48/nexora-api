@@ -185,6 +185,7 @@ func New(d Deps) *App {
 	}
 	amenitySvc := amenity.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.AmenityReminder)
 	amenityH := amenity.NewHandler(amenitySvc, files)
+	pinH := auth.NewPinHandler(auth.NewPinService(d.Pool, []byte(d.Cfg.JWTSecret), aud))
 	parkingH := parking.NewHandler(parking.NewService(d.Pool, aud, noteSvc))
 	helperSvc := helper.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
 	helperH := helper.NewHandler(helperSvc, files)
@@ -334,6 +335,10 @@ func New(d Deps) *App {
 				r.With(middleware.RequireFeature(feats, "sos"), need("sos.trigger")).Get("/sos", sosH.Mine)
 				r.With(middleware.RequireFeature(feats, "parking"), need("parking.read")).Get("/parking", parkingH.Mine)
 				r.Delete("/devices/{id}", meH.UnregisterDevice)
+				r.Get("/pin", pinH.Status)
+				r.Put("/pin", pinH.Set)
+				r.Delete("/pin", pinH.Forget)
+				r.Post("/pin/verify", pinH.Verify) // brute force is capped by the per-device counter, not by IP (a whole society shares one)
 				r.With(need("profile.manage")).Put("/profile", householdH.UpdateProfile)
 				r.With(need("profile.manage")).Get("/emergency-contact", householdH.GetEmergency)
 				r.With(need("profile.manage")).Put("/emergency-contact", householdH.SetEmergency)
