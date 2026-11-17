@@ -167,7 +167,7 @@ func (s *Service) one(ctx context.Context, societyID, id uuid.UUID, unitID *uuid
 	q := s.selectCols() + fromJoin + ` WHERE v.id=$1 AND v.society_id=$2`
 	args := []any{id, societyID}
 	if unitID != nil {
-		q += ` AND v.unit_id=$3`
+		q += ` AND v.unit_id=$3 AND v.hidden_by_resident_at IS NULL`
 		args = append(args, *unitID)
 	}
 	return s.scan(s.pool.QueryRow(ctx, q, args...))
@@ -337,7 +337,7 @@ func (s *Service) List(ctx context.Context, p authctx.Principal, f ListFilter) (
 		return nil, 0, err
 	}
 	args := []any{p.SocietyID, unitID}
-	where := []string{"v.society_id=$1", "v.unit_id=$2"}
+	where := []string{"v.society_id=$1", "v.unit_id=$2", "v.hidden_by_resident_at IS NULL"}
 	e := s.eff()
 	order := "v.created_at DESC, v.id"
 	switch f.Tab {
@@ -375,7 +375,7 @@ func (s *Service) Summary(ctx context.Context, p authctx.Principal) (*Summary, e
 		SELECT count(*) FILTER (WHERE %[1]s IN ('waiting','approved','inside')),
 		       count(*) FILTER (WHERE %[1]s = 'invited'),
 		       count(*) FILTER (WHERE v.created_at >= (date_trunc('day', now() AT TIME ZONE so.timezone) AT TIME ZONE so.timezone) AND v.status <> 'cancelled')
-		FROM visits v JOIN societies so ON so.id=v.society_id WHERE v.society_id=$1 AND v.unit_id=$2`, e), p.SocietyID, unitID).
+		FROM visits v JOIN societies so ON so.id=v.society_id WHERE v.society_id=$1 AND v.unit_id=$2 AND v.hidden_by_resident_at IS NULL`, e), p.SocietyID, unitID).
 		Scan(&sm.Active, &sm.Invited, &sm.Today)
 	return &sm, err
 }
@@ -406,6 +406,26 @@ func (s *Service) Cancel(ctx context.Context, p authctx.Principal, id uuid.UUID)
 	v, err := s.one(ctx, p.SocietyID, id, &unitID)
 	s.emit(ctx, "visit.cancelled", v)
 	return v, err
+}
+
+// Delete removes a finished visit (completed, rejected, expired or cancelled) from the flat's history.
+// The row is only hidden from residents; the office log and the gate log keep it.
+func (s *Service) Delete(ctx context.Context, p authctx.Principal, id uuid.UUID) error {
+	unitID, _, err := s.unitOf(ctx, p)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE visits AS v SET hidden_by_resident_at=now(), updated_at=now()
+		WHERE v.id=$1 AND v.society_id=$2 AND v.unit_id=$3 AND v.hidden_by_resident_at IS NULL
+		  AND `+s.eff()+` IN ('completed','rejected','expired','cancelled')`, id, p.SocietyID, unitID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return s.classify(ctx, p.SocietyID, id, &unitID) // 404 when gone or already removed, 409 while the visit is still open
+	}
+	s.logv(ctx, p, "visit.hide", id, nil)
+	return nil
 }
 
 // Decide lets a member of the flat approve or reject a waiting walk-in.

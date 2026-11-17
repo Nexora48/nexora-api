@@ -371,6 +371,7 @@ func New(d Deps) *App {
 			r.Get("/{id}/photo", visitorH.Photo) // residents of the flat, guards and admins; the service decides
 			r.With(need("visitor.create")).Post("/", visitorH.Create)
 			r.With(need("visitor.create")).Post("/{id}/cancel", visitorH.Cancel)
+			r.With(need("visitor.create")).Delete("/{id}", visitorH.Delete)
 			r.With(need("visitor.approve")).Post("/{id}/decision", visitorH.Decide)
 		})
 

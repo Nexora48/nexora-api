@@ -158,6 +158,7 @@ paths:
     get: { summary: "Counts for Home: active, invited, today", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/visitors/{id}:
     get: { summary: Visit detail (pass shown while invited), security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK }, "404": { description: NOT_FOUND } } }
+    delete: { summary: "Remove a finished visit (completed, rejected, expired or cancelled) from the flat's history. Hidden from residents only; the office and gate logs keep it. 409 INVALID_STATE while the visit is still open", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Removed }, "404": { description: NOT_FOUND (gone or another flat) }, "409": { description: INVALID_STATE } } }
   /api/v1/visitors/{id}/cancel:
     post: { summary: Cancel an open pass, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK }, "409": { description: INVALID_STATE } } }
   /api/v1/visitors/{id}/decision:
