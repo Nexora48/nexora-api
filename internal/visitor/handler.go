@@ -129,6 +129,20 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, v, nil)
 }
 
+// Delete removes a finished visit from the resident's history.
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := visitID(r)
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	if err := h.svc.Delete(r.Context(), principal(r), id); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.NoContent(w)
+}
+
 func (h *Handler) Decide(w http.ResponseWriter, r *http.Request) {
 	id, err := visitID(r)
 	if err != nil {
