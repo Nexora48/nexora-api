@@ -7,6 +7,7 @@ import (
 	"github.com/Nexora48/nexora-api/internal/attendance"
 	"github.com/Nexora48/nexora-api/internal/billing"
 	"github.com/Nexora48/nexora-api/internal/dashboard"
+	"github.com/Nexora48/nexora-api/internal/gatepass"
 	"github.com/Nexora48/nexora-api/internal/helper"
 	"github.com/Nexora48/nexora-api/internal/join"
 	"github.com/Nexora48/nexora-api/internal/limits"
@@ -187,6 +188,7 @@ func New(d Deps) *App {
 	amenityH := amenity.NewHandler(amenitySvc, files)
 	pinH := auth.NewPinHandler(auth.NewPinService(d.Pool, []byte(d.Cfg.JWTSecret), aud))
 	parkingH := parking.NewHandler(parking.NewService(d.Pool, aud, noteSvc))
+	gatePassH := gatepass.NewHandler(gatepass.NewService(d.Pool, aud, d.Cfg.JWTSecret))
 	helperSvc := helper.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
 	helperH := helper.NewHandler(helperSvc, files)
 	attendSvc := attendance.NewService(d.Pool, aud, files, noteSvc, hub, d.Cfg.JWTSecret)
@@ -334,6 +336,7 @@ func New(d Deps) *App {
 				r.With(middleware.RequireFeature(feats, "deliveries"), need("visitor.approve")).Put("/delivery-rules", deliveryH.SetRule)
 				r.With(middleware.RequireFeature(feats, "sos"), need("sos.trigger")).Get("/sos", sosH.Mine)
 				r.With(middleware.RequireFeature(feats, "parking"), need("parking.read")).Get("/parking", parkingH.Mine)
+				r.With(middleware.RequireFeature(feats, "visitors")).Get("/gate-pass", gatePassH.Mine)
 				r.Delete("/devices/{id}", meH.UnregisterDevice)
 				r.Get("/pin", pinH.Status)
 				r.Put("/pin", pinH.Set)
@@ -384,6 +387,8 @@ func New(d Deps) *App {
 			r.Get("/passes/sync", gateH.PassesSync)
 			r.Post("/events/batch", gateH.Batch)
 			r.Post("/verify", visitorH.Verify)
+			r.Post("/residents/verify", gatePassH.Verify)
+			r.Post("/residents/entry", gatePassH.Entry)
 			r.Get("/units", visitorH.GateUnits)
 			r.Get("/visits", visitorH.GateList)
 			r.Post("/visits", visitorH.WalkIn)

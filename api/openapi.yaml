@@ -180,6 +180,12 @@ paths:
     get: { summary: "KPIs: today, inside_now, awaiting", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /api/v1/society/visitors/export:
     get: { summary: "CSV of the filtered log (max 10,000 rows, formula-safe)", security: [{ bearer: [] }], responses: { "200": { description: text/csv } } }
+  /api/v1/me/gate-pass:
+    get: { summary: "The resident's own gate pass: a signed QR that works for 5 minutes (the app refreshes it) plus name, flat and role. 409 NO_FLAT for people without a flat", security: [{ bearer: [] }], responses: { "200": { description: "OK: qr, expires_at, name, unit_number, block_code, role" }, "409": { description: NO_FLAT } } }
+  /api/v1/gate/residents/verify:
+    post: { summary: "Guard: look up a scanned resident gate pass. Body {qr}. 200 with valid + reason (INVALID, EXPIRED, NOT_FOUND, SUSPENDED), the resident (no phone) and what scanning would log (next: in|out). Writes nothing", security: [{ bearer: [] }], responses: { "200": { description: OK }, "400": { description: BAD_PASS } } }
+  /api/v1/gate/residents/entry:
+    post: { summary: "Guard: log the entry or exit of a scanned resident gate pass. Directions alternate; a second scan within 8 seconds changes nothing (duplicate: true). 409 PASS_NOT_VALID when the pass is invalid, expired or suspended", security: [{ bearer: [] }], responses: { "200": { description: OK }, "409": { description: PASS_NOT_VALID } } }
   /api/v1/me/devices/{id}:
     delete: { summary: "Stop push to this device (logout)", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "204": { description: Cleared } } }
   /api/v1/ws:
