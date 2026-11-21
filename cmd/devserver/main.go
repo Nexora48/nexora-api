@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -44,7 +45,17 @@ func main() {
 		_ = os.RemoveAll(dataDir)
 	}
 	log.Info("starting embedded postgres (first run downloads binaries)...", "data", dataDir)
-	url, stopPG, err := testutil.StartPostgresAt(dataDir, 5433)
+	// Port 5433 unless DEV_PG_PORT says otherwise (another project's database may already own 5433).
+	pgPort := 5433
+	if v := os.Getenv("DEV_PG_PORT"); v != "" {
+		n, convErr := strconv.Atoi(v)
+		if convErr != nil || n < 1024 || n > 65535 {
+			log.Error("DEV_PG_PORT must be a port number between 1024 and 65535", "value", v)
+			os.Exit(1)
+		}
+		pgPort = n
+	}
+	url, stopPG, err := testutil.StartPostgresAt(dataDir, uint32(pgPort))
 	if err != nil {
 		log.Error("postgres", "err", err)
 		os.Exit(1)
